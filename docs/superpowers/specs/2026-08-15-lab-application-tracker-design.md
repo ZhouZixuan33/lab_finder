@@ -196,6 +196,66 @@ load_official_profile
 - MVP 不启用 LangGraph checkpointer 或持久化。实时 job 仍由内存 `jobs` 模块管理；图成功返回并通过业务校验后，service 才开启 SQLite 事务。
 - scope=new 对每位新增候选运行图并在全部成功后一次性写入；scope=professor 将图输出与当前记录比较并创建 proposal。
 
+#### 6.1.1 教授信息获取流程图
+
+```mermaid
+flowchart TD
+    job(["开始 update-check job"]) --> scope{"任务范围？"}
+    scope -->|"scope=new"| discover["扫描 UIUC ECE 教师目录"]
+    discover --> skip["跳过数据库中已存在的教授"]
+    skip --> candidate["逐位处理新增教授候选"]
+    scope -->|"scope=professor"| current["读取指定教授当前资料"]
+
+    candidate --> load
+    current --> load
+
+    uiuc[("UIUC 官方详情页")] -.-> load
+    tavily[("Tavily Search API")] -.-> search
+    web[("个人主页与实验室候选网页")] -.-> verify
+    openalex[("OpenAlex API")] -.-> publications
+    existing[("SQLite 现有标签与教授资料")] -.-> summarize
+
+    subgraph research_graph["LangGraph StateGraph：每位教授运行一次"]
+        load["load_official_profile<br/>读取并清洗官方资料"]
+        queries["build_search_queries<br/>构造固定搜索查询"]
+        search["search_web<br/>获取主页与实验室候选链接"]
+        verify["fetch_and_verify_candidates<br/>抓取页面并交叉验证来源"]
+        publications["find_publications<br/>官方页面优先，OpenAlex 补全"]
+        summarize["summarize_and_select_links<br/>LangChain 结构化输出"]
+        validate["validate_output<br/>Pydantic 与业务规则校验"]
+        valid{"校验通过？"}
+        retry{"retry_count 小于 2？"}
+        finalize["finalize<br/>生成 final_record"]
+
+        load --> queries --> search --> verify --> publications --> summarize
+        summarize --> validate --> valid
+        valid -->|"是"| finalize
+        valid -->|"否"| retry
+        retry -->|"是"| summarize
+    end
+
+    retry -->|"否"| failed["任务失败<br/>不写入教授、论文或 proposal"]
+    search -->|"额度或请求失败"| failed
+    verify -->|"页面抓取失败且无法降级"| failed
+    publications -->|"论文请求失败且无法降级"| failed
+    summarize -->|"模型请求失败"| failed
+
+    finalize --> persist{"调用来源？"}
+    persist -->|"scope=new"| batch["加入本次新增批次"]
+    batch --> all_valid{"全部新增候选都成功？"}
+    all_valid -->|"否"| failed
+    all_valid -->|"是"| insert["BEGIN IMMEDIATE<br/>一次性插入 professors 与 publications"]
+    insert --> added(["完成：返回 added_count"])
+
+    persist -->|"scope=professor"| compare["与当前教授字段和论文比较"]
+    compare --> changed{"存在真实差异？"}
+    changed -->|"否"| unchanged(["完成：changed=false"])
+    changed -->|"是"| proposal["插入 pending update_proposal<br/>不修改 professors"]
+    proposal --> reviewed(["等待用户确认或拒绝"])
+```
+
+虚线表示 LangGraph 节点读取的外部来源或现有上下文。`finalize` 只生成经过验证的 `final_record`，不执行 SQL；真正的数据库写入发生在图外的 service 层。新增教授采用整批事务，单人检查只创建待确认 proposal。
+
 ### 6.2 教师目录发现
 
 1. 请求 UIUC ECE Department Faculty 页面。
