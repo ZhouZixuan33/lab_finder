@@ -89,12 +89,13 @@ interested | applied | accepted | rejected
 ### 4.1 技术栈
 
 - 前端：JavaScript、React、Vite。
-- 后端：Python、FastAPI、Pydantic、SQLAlchemy、Alembic。
-- 数据库：SQLite。
+- 后端：Python、FastAPI、Pydantic。
+- 数据库：SQLite，通过 Python 标准库 `sqlite3` 执行参数化原始 SQL；不使用 ORM。
+- 数据库迁移：按编号排序的 `.sql` 文件和 SQLite `PRAGMA user_version`；不引入 Alembic。
 - HTTP 与抓取：httpx、Beautiful Soup。
 - 网页搜索：Tavily Search API，通过 `SearchProvider` 接口封装。
 - 学术论文补全：OpenAlex API，通过 `PublicationProvider` 接口封装。
-- LLM：OpenAI-compatible HTTP API，通过 `LLMClient` 封装。
+- LLM：OpenAI-compatible HTTP API，通过 `LLMClient` 封装，并由 LangGraph `StateGraph` 编排研究增强流程。
 - 前端测试：Vitest、React Testing Library、Playwright。
 - 后端测试：pytest。
 
@@ -111,13 +112,25 @@ Tavily 的 Search endpoint 提供带 URL、标题、摘要和可选正文的搜�
 - `discovery`：目录抓取、新教授识别和研究活跃判断。
 - `research`：网页搜索、来源验证、页面抓取和正文清洗。
 - `publications`：官方页面论文解析、OpenAlex 作者消歧和论文选择。
-- `summarization`：LLM 结构化输出和标签规范化。
+- `research_graph`：LangGraph 状态、节点、条件边、LLM 结构化输出和有限重试。
 - `updates`：单人检查、字段比较、proposal 创建和应用。
 - `jobs`：单进程内存任务状态。
+- `repositories`：集中保存参数化原始 SQL，并把 `sqlite3.Row` 结果解析为 Pydantic 数据模型。
 
 每个模块通过 service/repository 接口访问其他模块，路由层不直接执行抓取或 SQL。
 
-### 4.3 后台任务约束
+### 4.3 原始 SQL 与迁移约束
+
+- 统一连接工厂返回 `sqlite3.Connection`，并设置 `row_factory = sqlite3.Row`。
+- 每个连接启用 `PRAGMA foreign_keys = ON`、`PRAGMA journal_mode = WAL` 和 `PRAGMA busy_timeout = 5000`。
+- 所有外部输入通过 `?` 占位符绑定；禁止用 f-string、字符串拼接或模板插入 SQL 值。
+- 动态排序字段只能从后端白名单映射为固定 SQL 片段，不能直接采用查询参数。
+- 路由和 service 不拼装 SQL；每张表的查询集中在 repository 中，以便审查、测试和复用。
+- 多步写操作使用显式事务；需要尽早获得写锁的流程使用 `BEGIN IMMEDIATE`，异常时完整回滚。
+- 迁移文件命名为 `migrations/001_initial.sql`、`002_*.sql` 等。应用启动时读取 `PRAGMA user_version`，在事务中顺序执行尚未应用的脚本，并把 `user_version` 更新到对应版本。
+- 不创建额外的 migration 元数据表，因此业务数据库仍只有第 8 节定义的四张表。
+
+### 4.4 后台任务约束
 
 - 同一时间最多运行一个抓取任务。
 - FastAPI 必须以单 worker 运行。
@@ -130,27 +143,64 @@ Tavily 的 Search endpoint 提供带 URL、标题、摘要和可选正文的搜�
 本机 `.env` 保存：
 
 ```text
-DATABASE_URL=sqlite:///./data/lab_tracker.db
+DATABASE_PATH=./data/lab_tracker.db
 LLM_BASE_URL
 LLM_API_KEY
 LLM_MODEL
 TAVILY_API_KEY
 OPENALEX_API_KEY
-OPENALEX_CONTACT_EMAIL
 ```
 
-除 `DATABASE_URL` 外，其余变量由用户在本机填写；`OPENALEX_API_KEY` 可以为空，其余变量必填。`.env` 和 SQLite 数据文件必须加入 `.gitignore`。密钥不会传给前端、写入数据库或出现在日志中。
+除 `DATABASE_PATH` 外，其余变量由用户在本机填写并视为必填。Tavily 和 OpenAlex 都需要 API key，但可以使用免费账户获取。`.env` 和 SQLite 数据文件必须加入 `.gitignore`。密钥不会传给前端、写入数据库或出现在日志中。
+
+MVP 默认只使用免费额度，不启用自动付费或超额计费：
+
+- Tavily Researcher 免费计划当前提供每月 1,000 API credits。发现流程默认使用 `search_depth="basic"`，每次搜索消耗 1 credit；只有证据不足时才允许升级为 `advanced`，其每次搜索消耗 2 credits。正文由本应用使用 httpx 抓取，不调用非必要的 Tavily Extract/Crawl 接口。
+- OpenAlex 当前要求免费 API key，并为每个 key 提供每天 1 美元的免费用量。单条实体读取免费；list/filter 为每 1,000 次 0.10 美元，search 为每 1,000 次 1 美元。实现优先使用 author/works filter、字段选择、分页和缓存，避免重复搜索。
+- 免费额度和价格属于外部服务配置，可能变化；上线实现前以供应商官方文档为准。
+- 遇到额度耗尽或 429 时，任务以明确的 `EXTERNAL_QUOTA_EXCEEDED` 错误结束，不自动切换付费方案，也不写入部分数据。用户可在额度重置后重试。
+- Tavily 和 OpenAlex 的免费额度不包含 LLM 调用费用；LLM 是否收费取决于用户配置的 OpenAI-compatible provider。
 
 ## 6. 数据采集与 LLM 管线
 
-### 6.1 教师目录发现
+### 6.1 LangGraph 编排
+
+每位新教授或被单独检查的教授都运行同一个已编译 `StateGraph`。图负责研究资料的采集、工具调用、LLM 选择和校验，不直接写数据库。状态使用 `TypedDict` 定义，至少包含：
+
+```text
+professor_identity, official_profile, search_queries, search_results,
+verified_pages, publication_candidates, existing_tags, llm_output,
+validation_errors, retry_count, final_record
+```
+
+节点和主路径如下：
+
+```text
+load_official_profile
+  -> build_search_queries
+  -> search_web
+  -> fetch_and_verify_candidates
+  -> find_publications
+  -> summarize_and_select_links
+  -> validate_output
+  -> finalize
+```
+
+- `load_official_profile`、查询模板构造、候选验证和最终规范化为确定性节点。
+- `search_web` 通过 `SearchProvider` 调用 Tavily；`find_publications` 通过 `PublicationProvider` 调用 OpenAlex。
+- `summarize_and_select_links` 是唯一需要 LLM 的节点，通过 `LLMClient` 请求结构化 JSON。
+- `validate_output` 使用 Pydantic/JSON Schema 验证；失败时通过条件边最多返回 LLM 节点两次，之后结束为失败，禁止无限自主循环。
+- MVP 不启用 LangGraph checkpointer 或持久化。实时 job 仍由内存 `jobs` 模块管理；图成功返回并通过业务校验后，service 才开启 SQLite 事务。
+- scope=new 对每位新增候选运行图并在全部成功后一次性写入；scope=professor 将图输出与当前记录比较并创建 proposal。
+
+### 6.2 教师目录发现
 
 1. 请求 UIUC ECE Department Faculty 页面。
 2. 提取姓名、职称和官方详情页 URL。
 3. 规范化 URL，去除 fragment、无意义 query 参数和尾部斜杠差异。
 4. 根据第 3.1 节规则筛选 research-active faculty。
 
-### 6.2 新教授识别
+### 6.3 新教授识别
 
 按以下顺序判断目录条目是否已存在：
 
@@ -160,7 +210,7 @@ OPENALEX_CONTACT_EMAIL
 
 如果后两种规则命中多个教授，视为歧义并使本次新增操作失败，不创建重复记录。
 
-### 6.3 主页和实验室链接发现
+### 6.4 主页和实验室链接发现
 
 新教授或单人检查时执行：
 
@@ -172,7 +222,7 @@ OPENALEX_CONTACT_EMAIL
 6. 主页或实验室链接必须满足姓名匹配，并至少满足单位、邮箱或研究主题中的一项交叉验证。
 7. 低置信度或无证据时保存空值，不猜测链接。
 
-### 6.4 研究摘要和标签
+### 6.5 研究摘要和标签
 
 输入为已经清洗并附带来源 URL 的研究页面文本。LLM 使用 JSON Schema 输出：
 
@@ -194,7 +244,7 @@ OPENALEX_CONTACT_EMAIL
 - 标签保存前转为小写、压缩空白、去重并移除空字符串。
 - JSON Schema 验证失败最多重试两次；仍失败则整个教授处理失败。
 
-### 6.5 论文选择
+### 6.6 论文选择
 
 “最近三年”定义为当前年份及前两个自然年。例如 2026 年运行时只保留 2024–2026 年论文。
 
@@ -487,10 +537,12 @@ q, tags, state, page, page_size, sort, order
 ### 11.1 外部请求
 
 - 为目录、搜索、网页、OpenAlex 和 LLM 分别设置连接与总超时。
-- 429、超时和 5xx 最多重试三次，使用指数退避和抖动。
+- 超时和 5xx 最多重试三次，使用指数退避和抖动。
+- 429 先读取供应商的限流响应；短时速率限制可以按 `Retry-After` 有限重试，明确的日/月额度耗尽不重试并返回 `EXTERNAL_QUOTA_EXCEEDED`。
 - 4xx 配置错误不自动重试。
 - 限制并发，避免对 UIUC 或个人站点造成高请求压力。
 - 设置清晰的 User-Agent 和联系邮箱。
+- Tavily 查询和 OpenAlex 作者解析结果按规范化查询缓存，单次 job 内不重复计费请求。
 
 ### 11.2 新教授原子性
 
@@ -518,7 +570,8 @@ q, tags, state, page, page_size, sort, order
 - research-active 职称筛选。
 - 新教授重复检测和歧义处理。
 - 标签规范化与去重。
-- LLM JSON Schema 验证和重试。
+- LangGraph 节点状态转换、条件边、LLM JSON Schema 验证和最多两次重试。
+- 外部额度耗尽直接失败且不进入数据库写入阶段。
 - 作者消歧与论文三年窗口。
 - 论文去重和最多五篇规则。
 - source hash 和字段差异计算。
@@ -532,7 +585,9 @@ q, tags, state, page, page_size, sort, order
 
 ### 12.3 数据库与 API 集成测试
 
-- 使用临时 SQLite 数据库和 Alembic migration。
+- 使用临时 SQLite 数据库执行编号 `.sql` migration，并验证 `PRAGMA user_version` 可从空库顺序升级。
+- 验证 repository 只使用绑定参数，恶意搜索、筛选和排序输入不能改变 SQL 结构。
+- 验证连接启用外键、WAL 和 busy timeout，多步写入失败时事务完整回滚。
 - 验证四张表的外键、CHECK 和唯一约束。
 - scope=new 只插入新教授且失败时整体回滚。
 - scope=new 不调用现有教授的搜索、OpenAlex 或 LLM mock。
@@ -561,6 +616,7 @@ q, tags, state, page, page_size, sort, order
 5. 应用 proposal 后教授和论文更新，申请记录保持原值。
 6. 拒绝 proposal 后教授数据保持原值，可以再次检查。
 7. 外部服务失败时界面给出简洁错误，SQLite 不出现部分写入。
+8. 模拟 Tavily 或 OpenAlex 免费额度耗尽时，界面提示稍后重试且不会发起付费请求。
 
 ## 13. 成功标准
 
@@ -571,12 +627,18 @@ q, tags, state, page, page_size, sort, order
 - “查找新教授”永远不修改现有教授，并且只显示最终成功或失败通知。
 - 现有教授只有经过单人检查和用户确认才会改变。
 - 抓取或 LLM 失败不会破坏现有教授或申请数据。
+- 应用不依赖 ORM；schema 可由原始 SQL migration 从空 SQLite 数据库完整重建。
+- Tavily 和 OpenAlex 默认限制在免费额度内，额度耗尽时安全失败而不自动付费。
 
 ## 14. 参考资料
 
 - [UIUC ECE Department Faculty](https://ece.illinois.edu/about/directory/faculty-dept)
 - [Illinois Block I Logo Guidelines](https://brand.illinois.edu/visual-identity/logo)
 - [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)
+- [Tavily API Credits](https://docs.tavily.com/documentation/api-credits)
+- [LangGraph StateGraph](https://langchain-ai.github.io/langgraph/how-tos/state-reducers/)
 - [OpenAlex API Overview](https://developers.openalex.org/api-reference/introduction)
+- [OpenAlex Authentication and Pricing](https://developers.openalex.org/api-reference/authentication)
+- [OpenAlex Deprecations](https://developers.openalex.org/guides/deprecations)
 - [OpenAlex Authors](https://developers.openalex.org/api-reference/authors)
 - [OpenAlex Works](https://developers.openalex.org/api-reference/works/list-works)
