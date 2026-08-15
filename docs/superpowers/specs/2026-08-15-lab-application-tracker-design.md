@@ -95,7 +95,7 @@ interested | applied | accepted | rejected
 - HTTP 与抓取：httpx、Beautiful Soup。
 - 网页搜索：Tavily Search API，通过 `SearchProvider` 接口封装。
 - 学术论文补全：OpenAlex API，通过 `PublicationProvider` 接口封装。
-- LLM：OpenAI-compatible HTTP API，通过 `LLMClient` 封装，并由 LangGraph `StateGraph` 编排研究增强流程。
+- LLM：LangChain ChatModel 负责模型调用和 Pydantic 结构化输出；默认使用 `langchain-openai` 的 `ChatOpenAI`。LangGraph `StateGraph` 负责研究增强流程。
 - 前端测试：Vitest、React Testing Library、Playwright。
 - 后端测试：pytest。
 
@@ -112,7 +112,7 @@ Tavily 的 Search endpoint 提供带 URL、标题、摘要和可选正文的搜�
 - `discovery`：目录抓取、新教授识别和研究活跃判断。
 - `research`：网页搜索、来源验证、页面抓取和正文清洗。
 - `publications`：官方页面论文解析、OpenAlex 作者消歧和论文选择。
-- `research_graph`：LangGraph 状态、节点、条件边、LLM 结构化输出和有限重试。
+- `research_graph`：LangGraph 状态、节点、条件边、LangChain ChatModel 工厂、结构化输出和有限重试。
 - `updates`：单人检查、字段比较、proposal 创建和应用。
 - `jobs`：单进程内存任务状态。
 - `repositories`：集中保存参数化原始 SQL，并把 `sqlite3.Row` 结果解析为 Pydantic 数据模型。
@@ -151,7 +151,7 @@ TAVILY_API_KEY
 OPENALEX_API_KEY
 ```
 
-除 `DATABASE_PATH` 外，其余变量由用户在本机填写并视为必填。Tavily 和 OpenAlex 都需要 API key，但可以使用免费账户获取。`.env` 和 SQLite 数据文件必须加入 `.gitignore`。密钥不会传给前端、写入数据库或出现在日志中。
+`LLM_API_KEY`、`LLM_MODEL`、`TAVILY_API_KEY` 和 `OPENALEX_API_KEY` 必填；`LLM_BASE_URL` 只在使用符合 OpenAI API 规范的兼容端点时填写，使用官方 OpenAI 时留空。Tavily 和 OpenAlex 的 API key 都可以使用免费账户获取。`.env` 和 SQLite 数据文件必须加入 `.gitignore`。密钥不会传给前端、写入数据库或出现在日志中。
 
 MVP 默认只使用免费额度，不启用自动付费或超额计费：
 
@@ -159,7 +159,7 @@ MVP 默认只使用免费额度，不启用自动付费或超额计费：
 - OpenAlex 当前要求免费 API key，并为每个 key 提供每天 1 美元的免费用量。单条实体读取免费；list/filter 为每 1,000 次 0.10 美元，search 为每 1,000 次 1 美元。实现优先使用 author/works filter、字段选择、分页和缓存，避免重复搜索。
 - 免费额度和价格属于外部服务配置，可能变化；上线实现前以供应商官方文档为准。
 - 遇到额度耗尽或 429 时，任务以明确的 `EXTERNAL_QUOTA_EXCEEDED` 错误结束，不自动切换付费方案，也不写入部分数据。用户可在额度重置后重试。
-- Tavily 和 OpenAlex 的免费额度不包含 LLM 调用费用；LLM 是否收费取决于用户配置的 OpenAI-compatible provider。
+- Tavily 和 OpenAlex 的免费额度不包含 LLM 调用费用；LLM 是否收费取决于用户配置的模型供应商。
 
 ## 6. 数据采集与 LLM 管线
 
@@ -188,8 +188,11 @@ load_official_profile
 
 - `load_official_profile`、查询模板构造、候选验证和最终规范化为确定性节点。
 - `search_web` 通过 `SearchProvider` 调用 Tavily；`find_publications` 通过 `PublicationProvider` 调用 OpenAlex。
-- `summarize_and_select_links` 是唯一需要 LLM 的节点，通过 `LLMClient` 请求结构化 JSON。
-- `validate_output` 使用 Pydantic/JSON Schema 验证；失败时通过条件边最多返回 LLM 节点两次，之后结束为失败，禁止无限自主循环。
+- `create_chat_model(settings)` 是一个薄工厂函数，返回 LangChain `BaseChatModel`；它只负责把模型名、API key、可选 `base_url`、超时和网络重试参数传给 `ChatOpenAI`，不再另行实现模型客户端封装类。
+- `summarize_and_select_links` 是唯一需要 LLM 的节点。它调用 `model.with_structured_output(ProfessorResearchResult)`，直接获得经过 Pydantic 校验的结构化结果。
+- 默认 `ChatOpenAI` 只依赖 OpenAI 标准字段。若以后使用具有专有响应字段的供应商，应改用该供应商的 LangChain integration，而不是继续扩展通用工厂。
+- `validate_output` 执行业务规则校验；网络错误由 ChatModel 的有限重试处理，结构或业务校验失败则通过条件边最多返回 LLM 节点两次，之后结束为失败，禁止无限自主循环。
+- 不使用 LangChain `create_agent` 或自由工具调用循环。搜索次数、工具顺序和停止条件均由显式 StateGraph 节点与边决定，从而控制费用并保证结果可测试。
 - MVP 不启用 LangGraph checkpointer 或持久化。实时 job 仍由内存 `jobs` 模块管理；图成功返回并通过业务校验后，service 才开启 SQLite 事务。
 - scope=new 对每位新增候选运行图并在全部成功后一次性写入；scope=professor 将图输出与当前记录比较并创建 proposal。
 
@@ -224,7 +227,7 @@ load_official_profile
 
 ### 6.5 研究摘要和标签
 
-输入为已经清洗并附带来源 URL 的研究页面文本。LLM 使用 JSON Schema 输出：
+输入为已经清洗并附带来源 URL 的研究页面文本。LangChain 使用 `with_structured_output(ProfessorResearchResult)` 要求 LLM 返回以下数据结构：
 
 ```json
 {
@@ -242,7 +245,7 @@ load_official_profile
 - 标签由 LLM 自由生成，每位教授 3 至 6 个短标签。
 - 管线向 LLM 提供数据库中的现有标签，要求优先复用但允许创建新标签。
 - 标签保存前转为小写、压缩空白、去重并移除空字符串。
-- JSON Schema 验证失败最多重试两次；仍失败则整个教授处理失败。
+- Pydantic 解析或业务规则验证失败时，LangGraph 最多重新执行 LLM 节点两次；仍失败则整个教授处理失败。
 
 ### 6.6 论文选择
 
@@ -570,7 +573,10 @@ q, tags, state, page, page_size, sort, order
 - research-active 职称筛选。
 - 新教授重复检测和歧义处理。
 - 标签规范化与去重。
-- LangGraph 节点状态转换、条件边、LLM JSON Schema 验证和最多两次重试。
+- LangChain ChatModel 工厂的官方 OpenAI 与自定义 `base_url` 配置。
+- 使用 fake `BaseChatModel`/Runnable 测试 LangGraph，不在测试中访问真实 LLM。
+- LangGraph 节点状态转换、条件边、Pydantic 结构化输出和最多两次业务重试。
+- 确认图中没有自由 agent 循环，工具调用次数受确定路径和重试上限约束。
 - 外部额度耗尽直接失败且不进入数据库写入阶段。
 - 作者消歧与论文三年窗口。
 - 论文去重和最多五篇规则。
@@ -636,7 +642,9 @@ q, tags, state, page, page_size, sort, order
 - [Illinois Block I Logo Guidelines](https://brand.illinois.edu/visual-identity/logo)
 - [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)
 - [Tavily API Credits](https://docs.tavily.com/documentation/api-credits)
-- [LangGraph StateGraph](https://langchain-ai.github.io/langgraph/how-tos/state-reducers/)
+- [LangChain Models](https://docs.langchain.com/oss/python/langchain/models)
+- [LangChain Structured Output](https://reference.langchain.com/python/langchain-openai/chat_models/base/ChatOpenAI/with_structured_output)
+- [LangGraph Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api)
 - [OpenAlex API Overview](https://developers.openalex.org/api-reference/introduction)
 - [OpenAlex Authentication and Pricing](https://developers.openalex.org/api-reference/authentication)
 - [OpenAlex Deprecations](https://developers.openalex.org/guides/deprecations)
