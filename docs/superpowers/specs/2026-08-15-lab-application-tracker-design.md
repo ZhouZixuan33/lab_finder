@@ -214,6 +214,7 @@ flowchart TD
     web[("个人主页与实验室候选网页")] -.-> verify
     openalex[("OpenAlex API")] -.-> publications
     existing[("SQLite 现有标签与教授资料")] -.-> summarize
+    model[("LangChain ChatModel<br/>大模型 API")] -.-> summarize
 
     subgraph research_graph["LangGraph StateGraph：每位教授运行一次"]
         load["load_official_profile<br/>读取并清洗官方资料"]
@@ -221,7 +222,7 @@ flowchart TD
         search["search_web<br/>获取主页与实验室候选链接"]
         verify["fetch_and_verify_candidates<br/>抓取页面并交叉验证来源"]
         publications["find_publications<br/>官方页面优先，OpenAlex 补全"]
-        summarize["summarize_and_select_links<br/>LangChain 结构化输出"]
+        summarize["【调用大模型】summarize_and_select_links<br/>生成摘要、标签并选择主页与实验室链接"]
         validate["validate_output<br/>Pydantic 与业务规则校验"]
         valid{"校验通过？"}
         retry{"retry_count 小于 2？"}
@@ -231,7 +232,7 @@ flowchart TD
         summarize --> validate --> valid
         valid -->|"是"| finalize
         valid -->|"否"| retry
-        retry -->|"是"| summarize
+        retry -->|"是：再次调用大模型"| summarize
     end
 
     retry -->|"否"| failed["任务失败<br/>不写入教授、论文或 proposal"]
@@ -254,7 +255,7 @@ flowchart TD
     proposal --> reviewed(["等待用户确认或拒绝"])
 ```
 
-虚线表示 LangGraph 节点读取的外部来源或现有上下文。`finalize` 只生成经过验证的 `final_record`，不执行 SQL；真正的数据库写入发生在图外的 service 层。新增教授采用整批事务，单人检查只创建待确认 proposal。
+虚线表示 LangGraph 节点读取的外部来源或现有上下文。图中只有标记为“调用大模型”的 `summarize_and_select_links` 节点会请求 LLM：正常情况下每位教授调用一次；Pydantic 或业务规则校验失败时最多再调用两次。Tavily 和 OpenAlex 是普通外部 API，其他 LangGraph 节点都是确定性 Python 逻辑。`finalize` 只生成经过验证的 `final_record`，不执行 SQL；真正的数据库写入发生在图外的 service 层。新增教授采用整批事务，单人检查只创建待确认 proposal。
 
 ### 6.2 教师目录发现
 
