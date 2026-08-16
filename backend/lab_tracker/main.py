@@ -2,10 +2,14 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI
+from starlette.exceptions import HTTPException
+from starlette.responses import Response
+from starlette.staticfiles import StaticFiles
 
 from lab_tracker.api.applications import router as applications_router
 from lab_tracker.api.health import router as health_router
@@ -20,10 +24,26 @@ from lab_tracker.services.jobs import JobRegistry
 from lab_tracker.services.update_checks import build_default_update_check_service
 
 
+class SpaStaticFiles(StaticFiles):
+    """Serve built assets and fall back to index.html for client-side routes."""
+
+    async def get_response(self, path: str, scope: dict[str, Any]) -> Response:
+        try:
+            response = await super().get_response(path, scope)
+        except HTTPException as error:
+            if error.status_code != 404 or path.startswith("api/"):
+                raise
+            return await super().get_response("index.html", scope)
+        if response.status_code == 404 and not path.startswith("api/"):
+            return await super().get_response("index.html", scope)
+        return response
+
+
 def create_app(
     *,
     settings: Settings | None = None,
     update_check_service: Any | None = None,
+    frontend_dist_path: Path | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -69,6 +89,18 @@ def create_app(
     application.include_router(applications_router)
     application.include_router(update_checks_router)
     application.include_router(update_proposals_router)
+
+    @application.api_route(
+        "/api/{unmatched_path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        include_in_schema=False,
+    )
+    async def unmatched_api(unmatched_path: str) -> None:
+        raise HTTPException(status_code=404, detail=f"Unknown API path: /api/{unmatched_path}")
+
+    dist_path = frontend_dist_path or Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    if (dist_path / "index.html").is_file():
+        application.mount("/", SpaStaticFiles(directory=dist_path, html=True), name="frontend")
     return application
 
 
