@@ -10,6 +10,14 @@ from lab_tracker.models.professor import (
     TagCount,
 )
 from lab_tracker.models.publication import PublicationCreate, PublicationRecord
+from lab_tracker.models.research import (
+    ExtractedPage,
+    IdentitySignals,
+    OpenAlexPublication,
+    RegisteredSource,
+    ResearchIdentity,
+    SearchHit,
+)
 from lab_tracker.models.update import ProposalCreate, ProposalRecord
 
 __all__ = [
@@ -25,5 +33,11 @@ __all__ = [
     "ProposalStatus",
     "PublicationCreate",
     "PublicationRecord",
+    "ExtractedPage",
+    "IdentitySignals",
+    "OpenAlexPublication",
+    "RegisteredSource",
+    "ResearchIdentity",
+    "SearchHit",
     "TagCount",
 ]
