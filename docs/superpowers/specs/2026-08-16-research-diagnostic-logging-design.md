@@ -65,7 +65,7 @@ After the LangGraph result passes business validation and immediately before the
 
 The same event is emitted for a successful single-professor check before difference calculation. A validated result may therefore be inspected even when no database difference exists.
 
-If research fails before validation, the system emits `professor.research_failed` with professor name, error type, and the existing sanitized job error message. It does not emit a partial professor payload.
+If research fails before validation, the system emits `professor.research_failed` with the professor name and error type. It deliberately omits the exception message because provider exceptions may contain credential-bearing request URLs. It does not emit a partial professor payload.
 
 ## 5. Sensitive-data and volume controls
 
