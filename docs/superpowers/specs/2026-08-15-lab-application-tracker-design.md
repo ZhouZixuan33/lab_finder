@@ -1,7 +1,7 @@
 # Lab Application Tracker 设计规格
 
 - 日期：2026-08-15
-- 状态：对话设计已确认，书面规格待用户最终审阅
+- 状态：用户最终确认，可进入实施计划
 - 目标平台：个人本机、单用户、单进程
 - 数据源：[UIUC ECE All Faculty](https://ece.illinois.edu/about/directory/faculty)
 
