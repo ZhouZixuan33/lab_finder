@@ -31,6 +31,9 @@ dev = [
 where = ["."]
 include = ["lab_tracker*"]
 
+[tool.setuptools.package-data]
+lab_tracker = ["db/migrations/*.sql"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
