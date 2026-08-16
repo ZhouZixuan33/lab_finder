@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { getProfessors, getTags } from "../api/client";
+import JobNotice from "../components/JobNotice";
 import Pagination from "../components/Pagination";
 import ProfessorTable from "../components/ProfessorTable";
 import StatusFilter from "../components/StatusFilter";
 import TagFilter from "../components/TagFilter";
+import useUpdateJob from "../hooks/useUpdateJob";
 
 const PAGE_SIZE = 25;
 
@@ -21,10 +23,15 @@ export default function ProfessorListPage() {
   const [pagination, setPagination] = useState({ page: 1, pages: 0, total: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reloadToken, setReloadToken] = useState(0);
   const queryString = searchParams.toString();
   const state = searchParams.get("state") ?? "";
   const page = Math.max(Number(searchParams.get("page")) || 1, 1);
   const activeTags = selectedTags(searchParams);
+  const onJobComplete = useCallback((snapshot) => {
+    if (snapshot.scope === "new" && snapshot.added_count > 0) setReloadToken((value) => value + 1);
+  }, []);
+  const updateJob = useUpdateJob({ onComplete: onJobComplete });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -43,7 +50,7 @@ export default function ProfessorListPage() {
       if (!controller.signal.aborted) setLoading(false);
     });
     return () => controller.abort();
-  }, [queryString]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [queryString, reloadToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function updateQuery(updates) {
     const next = new URLSearchParams(searchParams);
@@ -70,7 +77,18 @@ export default function ProfessorListPage() {
           <h1>Professors</h1>
           <p>Explore research interests and keep every lab application in one place.</p>
         </div>
+        <button
+          className="button button--accent find-button"
+          type="button"
+          disabled={updateJob.running}
+          onClick={() => updateJob.start({ scope: "new" })}
+        >
+          {updateJob.running && <span className="spinner spinner--button" aria-hidden="true" />}
+          {updateJob.running ? "Checking for new professors…" : "Find new professors"}
+        </button>
       </section>
+
+      <JobNotice job={updateJob.job} error={updateJob.error} onDismiss={updateJob.clear} />
 
       <section className="filter-panel" aria-label="Professor filters">
         <form className="search-form" role="search" onSubmit={submitSearch}>
@@ -98,4 +116,3 @@ export default function ProfessorListPage() {
     </main>
   );
 }
-

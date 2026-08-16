@@ -19,7 +19,7 @@ a:hover { color: #c84113; }
 .topbar__inner { display: flex; width: min(78rem, calc(100% - 3rem)); min-height: 5rem; margin: 0 auto; align-items: center; }
 .brand-link { display: inline-flex; align-items: center; gap: 1.25rem; color: #fff; font-size: 1.2rem; font-weight: 760; letter-spacing: -0.02em; text-decoration: none; }
 .brand-link:hover { color: #fff; }
-.brand-logo { width: 2.75rem; height: 3.15rem; object-fit: contain; }
+.brand-logo { width: 2.75rem; height: 3.15rem; border-radius: 0.12rem; padding: 0.22rem; object-fit: contain; background: #fff; }
 
 .main-content { width: min(78rem, calc(100% - 3rem)); margin: 0 auto; padding: 2.5rem 0 4rem; }
 .page-heading { display: flex; justify-content: space-between; gap: 2rem; align-items: flex-end; margin-bottom: 1.5rem; }
@@ -72,8 +72,11 @@ a:hover { color: #c84113; }
 .pagination { display: flex; justify-content: center; align-items: center; gap: 1.2rem; padding-top: 1.5rem; color: #596476; }
 
 .back-link { display: inline-block; margin-bottom: 1.3rem; font-weight: 700; text-decoration: none; }
-.notice { margin-bottom: 1rem; border-radius: 0.45rem; padding: 0.75rem 1rem; }
+.notice { display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-bottom: 1rem; border-radius: 0.45rem; padding: 0.75rem 1rem; }
 .notice--success { border: 1px solid #91c9a4; color: #165b31; background: #e9f7ed; }
+.notice--warning { border: 1px solid #e2be61; color: #654800; background: #fff7db; }
+.notice--error { border: 1px solid #efb3b3; color: #7d2929; background: #fff0f0; }
+.notice__dismiss { border: 0; padding: 0 0.2rem; color: inherit; background: transparent; font-size: 1.35rem; line-height: 1; cursor: pointer; }
 .detail-hero { display: flex; justify-content: space-between; gap: 2rem; align-items: flex-start; margin-bottom: 1.5rem; }
 .detail-hero h1 { margin: 0.2rem 0 0.45rem; font-size: clamp(2rem, 4vw, 3.15rem); letter-spacing: -0.045em; }
 .checked-at { margin: 0.65rem 0 0; color: #6d7684; font-size: 0.85rem; }
@@ -81,6 +84,8 @@ a:hover { color: #c84113; }
 .link-button { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 .button--accent { color: #fff; background: #d3440d; }
 .button--accent:hover { color: #fff; background: #b73508; }
+.find-button { display: inline-flex; min-width: 12rem; align-items: center; justify-content: center; gap: 0.55rem; }
+.spinner--button { width: 1rem; height: 1rem; border-width: 2px; border-color: rgb(255 255 255 / 45%); border-top-color: #fff; }
 .button--danger { border-color: #c55555; color: #8a2929; background: #fff; }
 .detail-layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(18rem, 0.8fr); gap: 1.25rem; align-items: start; }
 .detail-main { display: grid; gap: 1.25rem; }
@@ -102,6 +107,33 @@ a:hover { color: #c84113; }
 .field textarea { width: 100%; resize: vertical; border: 1px solid #9ca9b9; border-radius: 0.38rem; padding: 0.65rem 0.7rem; color: #17243e; background: #fff; }
 .form-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
 .inline-error { margin: 0; color: #8a2929; }
+.proposal-heading { align-items: center; }
+.proposal-status { border-radius: 999px; padding: 0.4rem 0.75rem; color: #614700; background: #ffe7a0; font-size: 0.78rem; font-weight: 800; text-transform: capitalize; }
+.proposal-status--applied { color: #165b31; background: #ccebd5; }
+.proposal-status--rejected { color: #7e2f2f; background: #f6d5d5; }
+.diff-table-wrap { overflow-x: auto; border: 1px solid #dbe2eb; border-radius: 0.7rem; background: #fff; box-shadow: 0 0.5rem 1.5rem rgb(23 36 62 / 5%); }
+.diff-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.diff-table th, .diff-table td { padding: 1rem; border-top: 1px solid #e1e6ed; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.diff-table thead th { border-top: 0; color: #536071; background: #edf1f5; font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.diff-table thead th:first-child { width: 12rem; }
+.diff-table tbody th { color: #39475b; }
+.diff-row--changed { background: #fff9e8; }
+.changed-label { display: block; width: fit-content; margin-top: 0.35rem; border-radius: 999px; padding: 0.15rem 0.4rem; color: #714b00; background: #ffe29a; font-size: 0.67rem; text-transform: uppercase; }
+.diff-value-list { margin: 0; padding-left: 1.1rem; }
+.diff-value-list li + li { margin-top: 0.35rem; }
+.publication-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-top: 1.25rem; }
+.publication-change, .proposal-evidence { border: 1px solid #dbe2eb; border-radius: 0.7rem; padding: 1.25rem; background: #fff; }
+.publication-change--added { border-top: 4px solid #45a261; }
+.publication-change--removed { border-top: 4px solid #c75b5b; }
+.publication-change h3, .proposal-evidence h2 { margin: 0 0 0.8rem; font-size: 1.05rem; }
+.publication-change h3 span { color: #717b89; font-weight: 500; }
+.publication-change ul { margin: 0; padding-left: 1.2rem; }
+.publication-change li + li { margin-top: 0.65rem; }
+.publication-change li span { display: block; margin-top: 0.2rem; color: #717b89; font-size: 0.85rem; }
+.proposal-evidence { margin-top: 1.25rem; }
+.proposal-evidence ul { margin-bottom: 0; padding-left: 1.2rem; overflow-wrap: anywhere; }
+.proposal-actions { position: sticky; bottom: 0; display: flex; align-items: center; gap: 0.7rem; margin-top: 1.25rem; border: 1px solid #cbd4df; border-radius: 0.7rem 0.7rem 0 0; padding: 1rem 1.25rem; background: rgb(255 255 255 / 96%); box-shadow: 0 -0.4rem 1.5rem rgb(23 36 62 / 8%); backdrop-filter: blur(8px); }
+.proposal-actions p { margin: 0 0 0 auto; color: #687386; font-size: 0.84rem; }
 
 @media (max-width: 56rem) {
   .filter-panel { grid-template-columns: 1fr; }
@@ -113,6 +145,9 @@ a:hover { color: #c84113; }
   .professor-table td::before { content: attr(data-label); color: #697487; font-size: 0.76rem; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; }
   .detail-layout { grid-template-columns: 1fr; }
   .application-card { position: static; }
+  .publication-diff { grid-template-columns: 1fr; }
+  .proposal-actions { align-items: stretch; flex-direction: column; }
+  .proposal-actions p { margin-left: 0; }
 }
 
 @media (max-width: 40rem) {

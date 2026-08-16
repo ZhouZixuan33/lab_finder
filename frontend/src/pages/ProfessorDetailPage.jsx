@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { deleteApplication, getProfessor, saveApplication } from "../api/client";
 import ApplicationForm from "../components/ApplicationForm";
+import JobNotice from "../components/JobNotice";
 import PublicationList from "../components/PublicationList";
 import ResearchSummary from "../components/ResearchSummary";
+import useUpdateJob from "../hooks/useUpdateJob";
 
 function formatCheckedAt(value) {
   if (!value) return "Unknown";
@@ -13,15 +15,29 @@ function formatCheckedAt(value) {
 
 function ExternalProfileLink({ href, children }) {
   if (!href) return null;
-  return <a className="button button--secondary link-button" href={href} target="_blank" rel="noreferrer">{children}</a>;
+  let safeHref;
+  try {
+    const parsed = new URL(href);
+    safeHref = ["http:", "https:"].includes(parsed.protocol) ? parsed.href : null;
+  } catch {
+    safeHref = null;
+  }
+  if (!safeHref) return null;
+  return <a className="button button--secondary link-button" href={safeHref} target="_blank" rel="noreferrer">{children}</a>;
 }
 
 export default function ProfessorDetailPage() {
   const { professorId } = useParams();
+  const navigate = useNavigate();
   const [professor, setProfessor] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const onJobComplete = useCallback((snapshot) => {
+    if (snapshot.scope !== "professor" || String(snapshot.professor_id) !== String(professorId)) return;
+    if (snapshot.proposal_id) navigate(`/updates/${snapshot.proposal_id}`);
+  }, [navigate, professorId]);
+  const updateJob = useUpdateJob({ onComplete: onJobComplete });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -48,6 +64,12 @@ export default function ProfessorDetailPage() {
     setNotice("Application deleted.");
   }
 
+  async function checkProfessor() {
+    setNotice("");
+    const result = await updateJob.start({ scope: "professor", professor_id: Number(professorId) });
+    if (result?.pending) navigate(`/updates/${result.proposal_id}`);
+  }
+
   if (loading) return <main className="main-content"><div className="state-panel"><span className="spinner" aria-hidden="true" /> Loading professor…</div></main>;
   if (error) return <main className="main-content"><div className="state-panel state-panel--error" role="alert"><strong>Could not load professor.</strong><span>{error}</span><Link to="/">Back to professors</Link></div></main>;
   if (!professor) return null;
@@ -56,6 +78,7 @@ export default function ProfessorDetailPage() {
     <main className="main-content detail-page">
       <Link className="back-link" to="/">← Back to professors</Link>
       {notice && <div className="notice notice--success" role="status">{notice}</div>}
+      <JobNotice job={updateJob.job} error={updateJob.error} onDismiss={updateJob.clear} />
 
       <section className="detail-hero">
         <div>
@@ -67,7 +90,10 @@ export default function ProfessorDetailPage() {
         <div className="detail-actions">
           {professor.pending_proposal_id
             ? <Link className="button button--accent link-button" to={`/updates/${professor.pending_proposal_id}`}>View pending update</Link>
-            : <button className="button button--accent" type="button" data-professor-check={professor.id}>Check this professor</button>}
+            : <button className="button button--accent" type="button" disabled={updateJob.running} onClick={checkProfessor}>
+                {updateJob.running && <span className="spinner spinner--button" aria-hidden="true" />}
+                {updateJob.running ? "Checking…" : "Check this professor"}
+              </button>}
           <ExternalProfileLink href={professor.directory_profile_url}>UIUC profile</ExternalProfileLink>
           <ExternalProfileLink href={professor.homepage_url}>Homepage</ExternalProfileLink>
           <ExternalProfileLink href={professor.lab_url}>Lab website</ExternalProfileLink>
@@ -96,4 +122,3 @@ export default function ProfessorDetailPage() {
     </main>
   );
 }
-
