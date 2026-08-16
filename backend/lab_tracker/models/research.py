@@ -60,7 +60,7 @@ class ProfessorResearchResult(DomainModel):
     """
 
     research_summary: str = Field(min_length=40, max_length=2_000)
-    tags: list[str] = Field(min_length=1, max_length=12)
+    tags: list[str] = Field(min_length=1, max_length=3)
     homepage_source_id: str | None = None
     lab_source_id: str | None = None
     publication_source_ids: list[str] = Field(default_factory=list, max_length=25)

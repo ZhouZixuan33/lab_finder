@@ -142,7 +142,10 @@ def final_result(
         "research_summary": (
             "Alice Systems researches reliable computer architecture and secure accelerators."
         ),
-        "tags": ["Reliable AI", "Computer Architecture"],
+        "tags": [
+            "Security & Privacy",
+            "Computer Architecture & Systems",
+        ],
         "homepage_source_id": homepage_source_id,
         "lab_source_id": evidence_source_id,
         "publication_source_ids": ["openalex:W1"],
@@ -299,7 +302,8 @@ async def test_finalizer_retries_twice_then_accepts_valid_structure() -> None:
             AIMessage(content="Finalize."),
         ],
         finalizer_outputs=[
-            {"research_summary": "too short", "tags": [], "evidence_source_ids": []},
+            final_result()
+            | {"tags": ["Congestion Control"], "publication_source_ids": []},
             final_result(evidence_source_id="source_999"),
             final_result() | {"publication_source_ids": []},
         ],
@@ -308,8 +312,15 @@ async def test_finalizer_retries_twice_then_accepts_valid_structure() -> None:
 
     result = await graph.ainvoke()
 
-    assert result.tags == ["Reliable AI", "Computer Architecture"]
+    assert result.tags == [
+        "Security & Privacy",
+        "Computer Architecture & Systems",
+    ]
     assert len(model.finalizer_inputs) == 3
+    retry_prompt = " ".join(
+        str(message.content) for message in model.finalizer_inputs[1]
+    )
+    assert "controlled taxonomy" in retry_prompt
 
 
 @pytest.mark.asyncio

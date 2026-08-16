@@ -22,7 +22,7 @@ def test_application_model_allows_only_the_four_confirmed_states() -> None:
         ApplicationUpsert(state="not_tracked")
 
 
-def test_professor_model_accepts_free_form_llm_tags() -> None:
+def test_professor_storage_model_accepts_legacy_free_form_tags() -> None:
     professor = ProfessorCreate(
         name="Jane Example",
         title="Professor",

@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from lab_tracker.models.research import (
     ExtractedPage,
@@ -51,7 +52,11 @@ def test_validation_resolves_only_verified_source_and_publication_ids() -> None:
         research_summary=(
             "Alice Systems researches reliable computer architecture and secure accelerators."
         ),
-        tags=["Reliable AI", "Computer Architecture", "Reliable AI"],
+        tags=[
+            "Security & Privacy",
+            "Computer Architecture & Systems",
+            "Security & Privacy",
+        ],
         homepage_source_id=page.source_id,
         lab_source_id=page.source_id,
         publication_source_ids=[publication.source_id],
@@ -68,7 +73,7 @@ def test_validation_resolves_only_verified_source_and_publication_ids() -> None:
 
     assert validated.homepage_url == "https://alice.example.edu/lab"
     assert validated.lab_url == "https://alice.example.edu/lab"
-    assert validated.tags == ["Reliable AI", "Computer Architecture"]
+    assert validated.tags == ["Security & Privacy", "Computer Architecture & Systems"]
     assert [item.openalex_id for item in validated.publications] == ["W1"]
     assert validated.source_urls == ["https://alice.example.edu/lab"]
 
@@ -85,7 +90,7 @@ def test_validation_rejects_unknown_model_generated_ids(field: str, value: objec
     registry, page, publication = evidence()
     result = ProfessorResearchResult(
         research_summary="A sufficiently detailed summary grounded in validated research evidence.",
-        tags=["Systems"],
+        tags=["Computer Architecture & Systems"],
         evidence_source_ids=[page.source_id],
     ).model_copy(update={field: value})
 
@@ -103,7 +108,7 @@ def test_validation_rejects_summary_without_identity_matched_page_evidence() -> 
     unverified_page = page.model_copy(update={"identity_signals": IdentitySignals()})
     result = ProfessorResearchResult(
         research_summary="A sufficiently detailed summary that lacks verified identity evidence.",
-        tags=["Systems"],
+        tags=["Computer Architecture & Systems"],
         evidence_source_ids=[page.source_id],
     )
 
@@ -111,6 +116,66 @@ def test_validation_rejects_summary_without_identity_matched_page_evidence() -> 
         validate_research_result(
             result,
             pages=[unverified_page],
+            publications=[],
+            registry=registry,
+        )
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [
+        ["Computer Architecture & Systems"],
+        [
+            "Computer Architecture & Systems",
+            "Networking & Distributed Systems",
+            "Security & Privacy",
+        ],
+    ],
+)
+def test_research_result_accepts_one_to_three_tags(tags: list[str]) -> None:
+    result = ProfessorResearchResult(
+        research_summary="A sufficiently detailed evidence-grounded research summary.",
+        tags=tags,
+        evidence_source_ids=["source_001"],
+    )
+
+    assert result.tags == tags
+
+
+@pytest.mark.parametrize("count", [0, 4])
+def test_research_result_requires_one_to_three_tags(count: int) -> None:
+    tags = ["Computer Architecture & Systems"] * count
+
+    with pytest.raises(ValidationError):
+        ProfessorResearchResult(
+            research_summary="A sufficiently detailed evidence-grounded research summary.",
+            tags=tags,
+            evidence_source_ids=["source_001"],
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_tag",
+    [
+        "Congestion Control",
+        "Systems for Everything",
+        "computer architecture & systems",
+    ],
+)
+def test_validation_rejects_tags_outside_the_controlled_taxonomy(
+    invalid_tag: str,
+) -> None:
+    registry, page, _publication = evidence()
+    result = ProfessorResearchResult(
+        research_summary="A sufficiently detailed evidence-grounded research summary.",
+        tags=[invalid_tag],
+        evidence_source_ids=[page.source_id],
+    )
+
+    with pytest.raises(ResearchValidationError, match="controlled taxonomy"):
+        validate_research_result(
+            result,
+            pages=[page],
             publications=[],
             registry=registry,
         )

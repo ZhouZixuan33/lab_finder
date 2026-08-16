@@ -7,6 +7,7 @@ from lab_tracker.models.research import (
     ValidatedProfessorResearch,
 )
 from lab_tracker.services.research_sources import CandidateSourceRegistry, UnknownSourceError
+from lab_tracker.services.tag_taxonomy import ALLOWED_PROFESSOR_TAG_SET
 
 
 class ResearchValidationError(ValueError):
@@ -77,6 +78,13 @@ def validate_research_result(
             seen_tags.add(key)
     if not tags:
         raise ResearchValidationError("at least one non-empty research tag is required")
+    invalid_tags = [tag for tag in tags if tag not in ALLOWED_PROFESSOR_TAG_SET]
+    if invalid_tags:
+        invalid_text = ", ".join(repr(tag[:100]) for tag in invalid_tags)
+        raise ResearchValidationError(
+            "tags must use exact values from the controlled taxonomy; "
+            f"invalid tags: {invalid_text}"
+        )
 
     return ValidatedProfessorResearch(
         research_summary=" ".join(result.research_summary.split()),
