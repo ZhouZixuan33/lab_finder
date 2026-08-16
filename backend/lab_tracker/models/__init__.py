@@ -14,9 +14,11 @@ from lab_tracker.models.research import (
     ExtractedPage,
     IdentitySignals,
     OpenAlexPublication,
+    ProfessorResearchResult,
     RegisteredSource,
     ResearchIdentity,
     SearchHit,
+    ValidatedProfessorResearch,
 )
 from lab_tracker.models.update import ProposalCreate, ProposalRecord
 
@@ -36,8 +38,10 @@ __all__ = [
     "ExtractedPage",
     "IdentitySignals",
     "OpenAlexPublication",
+    "ProfessorResearchResult",
     "RegisteredSource",
     "ResearchIdentity",
     "SearchHit",
+    "ValidatedProfessorResearch",
     "TagCount",
 ]

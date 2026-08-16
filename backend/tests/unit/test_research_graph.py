@@ -1,0 +1,324 @@
+from collections import deque
+from collections.abc import Sequence
+from typing import Any, cast
+
+import pytest
+from langchain_core.messages import AIMessage, BaseMessage
+
+from lab_tracker.models.research import (
+    ExtractedPage,
+    IdentitySignals,
+    OpenAlexPublication,
+    ProfessorResearchResult,
+    ResearchIdentity,
+    SearchHit,
+)
+from lab_tracker.services.research_graph import ProfessorResearchGraph, ResearchGraphError
+from lab_tracker.services.research_sources import CandidateSourceRegistry
+from lab_tracker.services.research_tools import create_research_tools
+
+
+def tool_call(name: str, arguments: dict[str, object], call_id: str) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[{"name": name, "args": arguments, "id": call_id, "type": "tool_call"}],
+    )
+
+
+class FakeRunnable:
+    def __init__(self, outputs: deque[Any], captured_inputs: list[Any]) -> None:
+        self.outputs = outputs
+        self.captured_inputs = captured_inputs
+
+    async def ainvoke(self, value: Any) -> Any:
+        self.captured_inputs.append(value)
+        output = self.outputs.popleft()
+        if isinstance(output, Exception):
+            raise output
+        return output
+
+
+class FakeChatModel:
+    def __init__(
+        self,
+        *,
+        agent_outputs: Sequence[AIMessage],
+        finalizer_outputs: Sequence[object],
+    ) -> None:
+        self.agent_outputs = deque(agent_outputs)
+        self.finalizer_outputs = deque(finalizer_outputs)
+        self.agent_inputs: list[list[BaseMessage]] = []
+        self.finalizer_inputs: list[list[BaseMessage]] = []
+        self.bound_tool_names: list[str] = []
+        self.parallel_tool_calls: bool | None = None
+        self.structured_schema: object | None = None
+
+    def bind_tools(self, tools: Sequence[object], **kwargs: object) -> FakeRunnable:
+        self.bound_tool_names = [str(cast(Any, tool).name) for tool in tools]
+        self.parallel_tool_calls = kwargs.get("parallel_tool_calls")  # type: ignore[assignment]
+        return FakeRunnable(self.agent_outputs, self.agent_inputs)
+
+    def with_structured_output(self, schema: object) -> FakeRunnable:
+        self.structured_schema = schema
+        return FakeRunnable(self.finalizer_outputs, self.finalizer_inputs)
+
+
+class FakeSearchProvider:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    async def search(self, query: str) -> list[SearchHit]:
+        self.queries.append(query)
+        slug = len(self.queries)
+        return [
+            SearchHit(
+                title=f"Alice Lab {slug}",
+                url=f"https://alice.example.edu/lab-{slug}",
+                snippet="Reliable systems laboratory.",
+            )
+        ]
+
+
+class FakePageExtractor:
+    def __init__(self, registry: CandidateSourceRegistry) -> None:
+        self.registry = registry
+        self.source_ids: list[str] = []
+
+    async def extract(
+        self,
+        source_id: str,
+        _identity: ResearchIdentity,
+    ) -> ExtractedPage:
+        self.source_ids.append(source_id)
+        source = self.registry.get(source_id)
+        return ExtractedPage(
+            source_id=source.source_id,
+            candidate_id=source.candidate_id,
+            url=source.url,
+            title=source.title,
+            text="Alice Systems at UIUC researches reliable computing systems.",
+            identity_signals=IdentitySignals(name_match=True, affiliation_match=True),
+        )
+
+
+class FakeOpenAlex:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def get_recent_publications(
+        self,
+        _identity: ResearchIdentity,
+    ) -> list[OpenAlexPublication]:
+        self.calls += 1
+        return [
+            OpenAlexPublication(
+                source_id="openalex:W1",
+                openalex_id="W1",
+                title="Reliable Accelerators",
+                year=2026,
+                publication_url="https://openalex.org/W1",
+            )
+        ]
+
+
+def identity() -> ResearchIdentity:
+    return ResearchIdentity(
+        name="Alice Systems",
+        email="alice@illinois.edu",
+        title="Professor",
+        affiliation="University of Illinois Urbana-Champaign Electrical and Computer Engineering",
+        official_profile_url="https://ece.illinois.edu/about/directory/faculty/alice",
+    )
+
+
+def final_result(
+    *,
+    evidence_source_id: str = "source_002",
+    homepage_source_id: str | None = "source_002",
+) -> dict[str, object]:
+    return {
+        "research_summary": (
+            "Alice Systems researches reliable computer architecture and secure accelerators."
+        ),
+        "tags": ["Reliable AI", "Computer Architecture"],
+        "homepage_source_id": homepage_source_id,
+        "lab_source_id": evidence_source_id,
+        "publication_source_ids": ["openalex:W1"],
+        "evidence_source_ids": [evidence_source_id],
+        "confidence": 0.9,
+    }
+
+
+def build_graph(
+    model: FakeChatModel,
+) -> tuple[ProfessorResearchGraph, FakeSearchProvider, FakePageExtractor, FakeOpenAlex]:
+    professor_identity = identity()
+    registry = CandidateSourceRegistry()
+    search = FakeSearchProvider()
+    pages = FakePageExtractor(registry)
+    openalex = FakeOpenAlex()
+    tools = create_research_tools(
+        identity=professor_identity,
+        registry=registry,
+        tavily=search,
+        page_extractor=pages,
+        openalex=openalex,
+    )
+    graph = ProfessorResearchGraph(
+        identity=professor_identity,
+        chat_model=model,
+        tools=tools,
+        registry=registry,
+    )
+    return graph, search, pages, openalex
+
+
+@pytest.mark.asyncio
+async def test_graph_runs_explicit_tool_sequence_and_structured_finalizer() -> None:
+    model = FakeChatModel(
+        agent_outputs=[
+            tool_call("search_professor_web", {"query": "Alice Systems UIUC lab"}, "call-1"),
+            tool_call("extract_candidate_page", {"source_id": "source_002"}, "call-2"),
+            tool_call("get_recent_publications", {}, "call-3"),
+            AIMessage(content="Evidence is sufficient."),
+        ],
+        finalizer_outputs=[final_result()],
+    )
+    graph, search, pages, openalex = build_graph(model)
+
+    result = await graph.ainvoke()
+
+    assert search.queries == ["Alice Systems UIUC lab"]
+    assert pages.source_ids == ["source_002"]
+    assert openalex.calls == 1
+    assert result.homepage_url == "https://alice.example.edu/lab-1"
+    assert [publication.openalex_id for publication in result.publications] == ["W1"]
+    assert model.parallel_tool_calls is False
+    assert model.structured_schema is ProfessorResearchResult
+    assert set(model.bound_tool_names) == {
+        "search_professor_web",
+        "extract_candidate_page",
+        "get_recent_publications",
+    }
+
+
+@pytest.mark.asyncio
+async def test_graph_allows_search_rewrite_but_enforces_three_search_budget() -> None:
+    model = FakeChatModel(
+        agent_outputs=[
+            tool_call("search_professor_web", {"query": "query one"}, "call-1"),
+            tool_call("search_professor_web", {"query": "query two"}, "call-2"),
+            tool_call("search_professor_web", {"query": "query three"}, "call-3"),
+            tool_call("search_professor_web", {"query": "query four"}, "call-4"),
+            tool_call("extract_candidate_page", {"source_id": "source_002"}, "call-5"),
+            tool_call("get_recent_publications", {}, "call-6"),
+            AIMessage(content="Stop and finalize."),
+        ],
+        finalizer_outputs=[final_result()],
+    )
+    graph, search, pages, _openalex = build_graph(model)
+
+    result = await graph.ainvoke()
+
+    assert search.queries == ["query one", "query two", "query three"]
+    assert pages.source_ids == ["source_002"]
+    assert result.research_summary.startswith("Alice Systems")
+    guard_errors = [
+        message
+        for invocation in model.agent_inputs
+        for message in invocation
+        if (
+            getattr(message, "type", None) == "tool"
+            and "TOOL_BUDGET_EXCEEDED" in str(message.content)
+        )
+    ]
+    assert guard_errors
+
+
+@pytest.mark.asyncio
+async def test_graph_rejects_arbitrary_url_and_parallel_tool_calls_before_toolnode() -> None:
+    model = FakeChatModel(
+        agent_outputs=[
+            tool_call("browse_any_url", {"url": "https://attacker.example"}, "call-0"),
+            tool_call(
+                "search_professor_web",
+                {"query": "Alice Systems", "professor_name": "Different Person"},
+                "call-override",
+            ),
+            tool_call(
+                "extract_candidate_page",
+                {"source_id": "https://attacker.example/prompt"},
+                "call-1",
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "search_professor_web",
+                        "args": {"query": "one"},
+                        "id": "call-2",
+                        "type": "tool_call",
+                    },
+                    {
+                        "name": "get_recent_publications",
+                        "args": {},
+                        "id": "call-3",
+                        "type": "tool_call",
+                    },
+                ],
+            ),
+            tool_call("extract_candidate_page", {"source_id": "source_001"}, "call-4"),
+            AIMessage(content="Finalize."),
+        ],
+        finalizer_outputs=[
+            final_result(
+                evidence_source_id="source_001",
+                homepage_source_id="source_001",
+            )
+            | {"publication_source_ids": []}
+        ],
+    )
+    graph, search, pages, openalex = build_graph(model)
+
+    result = await graph.ainvoke()
+
+    assert search.queries == []
+    assert openalex.calls == 0
+    assert pages.source_ids == ["source_001"]
+    assert result.homepage_url == identity().official_profile_url
+
+
+@pytest.mark.asyncio
+async def test_finalizer_retries_twice_then_accepts_valid_structure() -> None:
+    model = FakeChatModel(
+        agent_outputs=[
+            tool_call("search_professor_web", {"query": "Alice Systems"}, "call-1"),
+            tool_call("extract_candidate_page", {"source_id": "source_002"}, "call-2"),
+            AIMessage(content="Finalize."),
+        ],
+        finalizer_outputs=[
+            {"research_summary": "too short", "tags": [], "evidence_source_ids": []},
+            final_result(evidence_source_id="source_999"),
+            final_result() | {"publication_source_ids": []},
+        ],
+    )
+    graph, _search, _pages, _openalex = build_graph(model)
+
+    result = await graph.ainvoke()
+
+    assert result.tags == ["Reliable AI", "Computer Architecture"]
+    assert len(model.finalizer_inputs) == 3
+
+
+@pytest.mark.asyncio
+async def test_finalizer_fails_after_three_invalid_attempts() -> None:
+    model = FakeChatModel(
+        agent_outputs=[AIMessage(content="Finalize without evidence.")],
+        finalizer_outputs=[final_result(), final_result(), final_result()],
+    )
+    graph, _search, _pages, _openalex = build_graph(model)
+
+    with pytest.raises(ResearchGraphError, match="evidence"):
+        await graph.ainvoke()
+
+    assert len(model.finalizer_inputs) == 3

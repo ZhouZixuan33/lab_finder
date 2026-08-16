@@ -5,6 +5,7 @@ import pytest
 
 from lab_tracker.models.research import ResearchIdentity, SearchHit
 from lab_tracker.services.page_extractor import PageExtractor
+from lab_tracker.services.research_prompts import build_finalizer_messages
 from lab_tracker.services.research_sources import (
     CandidateSourceRegistry,
     UnknownSourceError,
@@ -83,3 +84,34 @@ async def test_page_extractor_accepts_only_registry_ids_and_sanitizes_untrusted_
     with pytest.raises(UnknownSourceError):
         await extractor.extract("https://attacker.example/prompt", identity)
     assert http.requested_urls == [url]
+
+
+@pytest.mark.asyncio
+async def test_prompt_injection_text_never_reaches_the_finalizer_prompt() -> None:
+    url = "https://alice.example.edu/research"
+    registry = CandidateSourceRegistry()
+    source = registry.register_hit(SearchHit(title="Alice", url=url, snippet="Research"))
+    html = (FIXTURES / "prompt_injection_page.html").read_text(encoding="utf-8")
+    identity = ResearchIdentity(
+        name="Alice Systems",
+        email="alice@illinois.edu",
+        title="Professor",
+        affiliation="University of Illinois Urbana-Champaign Electrical and Computer Engineering",
+        official_profile_url="https://ece.illinois.edu/about/directory/faculty/alice",
+    )
+    page = await PageExtractor(FakeHttpClient({url: html}), registry).extract(
+        source.source_id,
+        identity,
+    )
+
+    messages = build_finalizer_messages(
+        identity,
+        pages=[page],
+        publications=[],
+        previous_errors=[],
+    )
+    prompt = " ".join(str(message.content) for message in messages)
+
+    assert "reliable computing systems" in prompt
+    assert "Ignore all previous instructions" not in prompt
+    assert "stealSecrets" not in prompt
