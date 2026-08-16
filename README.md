@@ -13,3 +13,8 @@ The implementation is in progress. The approved design and implementation plan a
 - An API key for the configured LangChain chat model
 
 Copy `.env.example` to `.env` before running the backend. Never commit `.env` or the SQLite database.
+
+## Brand asset
+
+The header uses the official orange-and-blue Block I published by the
+[University of Illinois Brand Guidelines](https://brand.illinois.edu/visual-identity/logo).
