@@ -1,10 +1,10 @@
 # Lab Application Tracker
 
-A local, single-user full-stack application for researching UIUC ECE professors and tracking lab applications. It discovers faculty from the official directory, uses a bounded LangGraph research workflow to verify lab links, summarize research, generate free-form tags, and collect recent publications, then stores the results in SQLite.
+A local, single-user full-stack application for researching UIUC ECE professors and tracking lab applications. It discovers faculty from the official directory, uses a bounded LangGraph research workflow to verify lab links, summarize research, classify each professor into one to three controlled broad research categories, and collect recent publications, then stores the results in SQLite.
 
 ## Features
 
-- Responsive professor catalog with search, generated-tag filtering, application-state filtering, and pagination.
+- Responsive professor catalog with search, broad-category filtering, application-state filtering, and pagination.
 - Professor details with research summary, homepage/lab links, evidence sources, recent OpenAlex publications, and last-check time.
 - Simple application flow: `Interested → Applied → Accepted/Rejected`, with one optional application date and notes.
 - “Find new professors” only inserts faculty absent from the database. Existing professor records are never changed by this operation.
@@ -91,6 +91,11 @@ When the backend is started with `python -m lab_tracker`, safe research diagnost
 Successful validation also emits `professor.extracted` followed by a one-line JSON object containing the professor identity, summary, tags, links, publications, sources, and confidence. API keys, authorization headers, prompts, raw model output, and extracted page bodies are never logged.
 
 Each professor can produce several LLM events because the bounded research agent may call tools over multiple turns and then use a separate structured finalizer.
+
+LLM-generated tags are restricted to one through three values from a controlled set of
+12 broad ECE research categories. The finalizer receives the complete taxonomy in its
+system prompt, and deterministic validation rejects narrow or invented categories
+instead of silently storing them.
 
 ## Production-style local run
 
