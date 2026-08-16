@@ -1,9 +1,12 @@
 import asyncio
+import json
+import logging
 from pathlib import Path
 
 import pytest
 
 from lab_tracker.db.connection import connect_database
+from lab_tracker.diagnostics import LOGGER_NAME
 from lab_tracker.models.research import OpenAlexPublication, ValidatedProfessorResearch
 from lab_tracker.services.discovery import FacultyCandidate
 from lab_tracker.services.jobs import JobOutcome, JobRegistry, JobStatus
@@ -177,5 +180,36 @@ async def test_job_level_failure_stops_remaining_candidates_but_keeps_prior_comm
     )
     assert researcher.calls == ["Professor 1", "Professor 2", "Professor 3"]
     assert await professor_count(database_path) == 2
+
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_new_job_logs_validated_professor_before_persistence(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    database_path = tmp_path / "logged-new-job.db"
+    service = UpdateCheckService(
+        database_path=database_path,
+        jobs=JobRegistry(),
+        discovery=FakeDiscovery(candidates(1)),
+        researcher=FailOnceResearcher(),
+    )
+
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        job = await run_job(service)
+
+    message = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("professor.extracted ")
+    )
+    payload = json.loads(message.split(" ", 1)[1])
+    assert job.status is JobStatus.COMPLETED
+    assert payload["name"] == "Professor 1"
+    assert payload["lab_url"] == "https://professor-1.example.edu/lab"
+    assert payload["publications"][0]["title"] == "Research Paper 1"
+    assert await professor_count(database_path) == 1
 
     await service.shutdown()

@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Sequence
+from time import perf_counter
 from typing import Any, Literal, Protocol, cast
 
 from langchain_core.messages import AIMessage, ToolMessage
@@ -10,6 +11,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from pydantic import ValidationError
 
+from lab_tracker.diagnostics import emit_research_event
 from lab_tracker.models.research import (
     ExtractedPage,
     OpenAlexPublication,
@@ -154,7 +156,34 @@ class ProfessorResearchGraph:
         if state.get("turn_count", 0) >= MAX_AGENT_TURNS:
             return {**updates, "force_finalize": True}
 
-        response = await self.agent_model.ainvoke(state["messages"])
+        attempt = state.get("turn_count", 0) + 1
+        started_at = perf_counter()
+        emit_research_event(
+            "llm_call.started",
+            professor=self.identity.name,
+            phase="research_agent",
+            attempt=attempt,
+        )
+        try:
+            response = await self.agent_model.ainvoke(state["messages"])
+        except Exception as error:
+            emit_research_event(
+                "llm_call.failed",
+                professor=self.identity.name,
+                phase="research_agent",
+                attempt=attempt,
+                duration_ms=round((perf_counter() - started_at) * 1_000),
+                error_type=type(error).__name__,
+            )
+            raise
+        emit_research_event(
+            "llm_call.completed",
+            professor=self.identity.name,
+            phase="research_agent",
+            attempt=attempt,
+            duration_ms=round((perf_counter() - started_at) * 1_000),
+            tool_calls=len(response.tool_calls) if isinstance(response, AIMessage) else 0,
+        )
         if not isinstance(response, AIMessage):
             raise ResearchGraphError("Research agent returned a non-AI message")
         return {
@@ -320,7 +349,7 @@ class ProfessorResearchGraph:
         errors = list(state.get("finalizer_errors", []))
         pages = state.get("pages", [])
         publications = state.get("publications", [])
-        for _attempt in range(3):
+        for attempt_index in range(3):
             messages = build_finalizer_messages(
                 self.identity,
                 pages=pages,
@@ -328,7 +357,33 @@ class ProfessorResearchGraph:
                 previous_errors=errors,
             )
             try:
-                raw_result = await self.finalizer_model.ainvoke(messages)
+                attempt = attempt_index + 1
+                started_at = perf_counter()
+                emit_research_event(
+                    "llm_call.started",
+                    professor=self.identity.name,
+                    phase="finalizer",
+                    attempt=attempt,
+                )
+                try:
+                    raw_result = await self.finalizer_model.ainvoke(messages)
+                except Exception as error:
+                    emit_research_event(
+                        "llm_call.failed",
+                        professor=self.identity.name,
+                        phase="finalizer",
+                        attempt=attempt,
+                        duration_ms=round((perf_counter() - started_at) * 1_000),
+                        error_type=type(error).__name__,
+                    )
+                    raise
+                emit_research_event(
+                    "llm_call.completed",
+                    professor=self.identity.name,
+                    phase="finalizer",
+                    attempt=attempt,
+                    duration_ms=round((perf_counter() - started_at) * 1_000),
+                )
                 result = ProfessorResearchResult.model_validate(raw_result)
                 validated = validate_research_result(
                     result,

@@ -1,3 +1,4 @@
+import logging
 import time
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 from lab_tracker.config import Settings
 from lab_tracker.db.connection import connect_database
 from lab_tracker.db.migrations import run_migrations
+from lab_tracker.diagnostics import LOGGER_NAME
 from lab_tracker.main import create_app
 from lab_tracker.models.application import ApplicationUpsert
 from lab_tracker.models.common import ApplicationState, ProposalStatus
@@ -158,11 +160,12 @@ def wait_for_job(client: TestClient, job_id: str) -> dict[str, object]:
 
 def test_single_check_creates_pending_without_writes_then_apply_is_atomic(
     tmp_path: Path,
+    caplog,
 ) -> None:
     database_path = tmp_path / "proposal-apply.db"
     client, researcher, professor_id = build_client(database_path, changed_research())
 
-    with client:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME), client:
         started = client.post(
             "/api/update-checks",
             json={"scope": "professor", "professor_id": professor_id},
@@ -205,6 +208,11 @@ def test_single_check_creates_pending_without_writes_then_apply_is_atomic(
         "Dependable AI Hardware"
     ]
     assert detail_after["application"] == detail_before["application"]
+    assert any(
+        record.getMessage().startswith("professor.extracted ")
+        and '"name":"Alice Systems"' in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_no_difference_returns_changed_false_and_reject_is_one_way(tmp_path: Path) -> None:

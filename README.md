@@ -80,6 +80,18 @@ pnpm --dir frontend dev
 
 Open `http://127.0.0.1:5173`. Vite proxies `/api` to `http://127.0.0.1:8000`.
 
+## Research diagnostics
+
+When the backend is started with `python -m lab_tracker`, safe research diagnostics are printed to the same terminal. LLM activity is shown by these events:
+
+- `llm_call.started`: application code reached a real model invocation;
+- `llm_call.completed`: the provider returned a response;
+- `llm_call.failed`: the invocation raised an authentication, quota, transport, or model error.
+
+Successful validation also emits `professor.extracted` followed by a one-line JSON object containing the professor identity, summary, tags, links, publications, sources, and confidence. API keys, authorization headers, prompts, raw model output, and extracted page bodies are never logged.
+
+Each professor can produce several LLM events because the bounded research agent may call tools over multiple turns and then use a separate structured finalizer.
+
 ## Production-style local run
 
 Build the frontend, then start the one-worker Python service:

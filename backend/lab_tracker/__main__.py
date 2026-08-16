@@ -2,8 +2,11 @@
 
 import uvicorn
 
+from lab_tracker.diagnostics import configure_application_logging
+
 
 def main() -> None:
+    configure_application_logging()
     uvicorn.run(
         "lab_tracker.main:app",
         host="127.0.0.1",

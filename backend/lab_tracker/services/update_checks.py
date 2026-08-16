@@ -13,6 +13,10 @@ from langchain_openai import ChatOpenAI
 from lab_tracker.config import Settings
 from lab_tracker.db.connection import connect_database, transaction
 from lab_tracker.db.migrations import run_migrations
+from lab_tracker.diagnostics import (
+    emit_professor_extracted,
+    emit_professor_research_failed,
+)
 from lab_tracker.models.professor import ProfessorCreate
 from lab_tracker.models.publication import PublicationCreate
 from lab_tracker.models.research import (
@@ -242,8 +246,14 @@ class UpdateCheckService:
         for candidate, identity_error in work_items:
             try:
                 if identity_error is not None:
+                    emit_professor_research_failed(candidate.name, identity_error)
                     raise identity_error
-                research = await self.researcher.research(candidate)
+                try:
+                    research = await self.researcher.research(candidate)
+                except Exception as error:
+                    emit_professor_research_failed(candidate.name, error)
+                    raise
+                emit_professor_extracted(candidate, research)
                 self._persist_professor(candidate, research)
             except Exception as error:  # noqa: BLE001 - candidate isolation is intentional
                 processed_count += 1

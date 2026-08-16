@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Protocol
 
 from lab_tracker.db.connection import connect_database, transaction
+from lab_tracker.diagnostics import (
+    emit_professor_extracted,
+    emit_professor_research_failed,
+)
 from lab_tracker.errors import ProfessorNotFoundError
 from lab_tracker.models.common import ProposalStatus
 from lab_tracker.models.professor import ProfessorCreate
@@ -80,7 +84,12 @@ class ProfessorUpdateService:
             email=current.email,
             directory_profile_url=current.directory_profile_url,
         )
-        research = await self.researcher.research_with_refresh(candidate)
+        try:
+            research = await self.researcher.research_with_refresh(candidate)
+        except Exception as error:
+            emit_professor_research_failed(candidate.name, error)
+            raise
+        emit_professor_extracted(candidate, research)
         difference = compare_professor_update(current, current_publications, research)
         if not difference.changed:
             return False, None

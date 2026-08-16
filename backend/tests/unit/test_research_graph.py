@@ -1,3 +1,4 @@
+import logging
 from collections import deque
 from collections.abc import Sequence
 from typing import Any, cast
@@ -5,6 +6,7 @@ from typing import Any, cast
 import pytest
 from langchain_core.messages import AIMessage, BaseMessage
 
+from lab_tracker.diagnostics import LOGGER_NAME
 from lab_tracker.models.research import (
     ExtractedPage,
     IdentitySignals,
@@ -322,3 +324,53 @@ async def test_finalizer_fails_after_three_invalid_attempts() -> None:
         await graph.ainvoke()
 
     assert len(model.finalizer_inputs) == 3
+
+
+@pytest.mark.asyncio
+async def test_graph_logs_real_agent_and_finalizer_invocation_boundaries(caplog) -> None:
+    model = FakeChatModel(
+        agent_outputs=[
+            tool_call("extract_candidate_page", {"source_id": "source_001"}, "call-1"),
+            AIMessage(content="Finalize."),
+        ],
+        finalizer_outputs=[
+            final_result(
+                evidence_source_id="source_001",
+                homepage_source_id="source_001",
+            )
+            | {"publication_source_ids": []}
+        ],
+    )
+    graph, _search, _pages, _openalex = build_graph(model)
+
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await graph.ainvoke()
+
+    output = "\n".join(record.getMessage() for record in caplog.records)
+    assert 'llm_call.started {"attempt":1,"phase":"research_agent"' in output
+    assert 'llm_call.completed {"attempt":1,"duration_ms":' in output
+    assert '"phase":"research_agent"' in output
+    assert 'llm_call.started {"attempt":1,"phase":"finalizer"' in output
+    assert '"phase":"finalizer"' in output
+
+
+@pytest.mark.asyncio
+async def test_graph_logs_model_failure_without_exception_message(caplog) -> None:
+    secret = "AIza-should-not-be-logged"
+    model = FakeChatModel(
+        agent_outputs=cast(Sequence[AIMessage], [RuntimeError(secret)]),
+        finalizer_outputs=[],
+    )
+    graph, _search, _pages, _openalex = build_graph(model)
+
+    with (
+        caplog.at_level(logging.INFO, logger=LOGGER_NAME),
+        pytest.raises(RuntimeError, match="should-not-be-logged"),
+    ):
+        await graph.ainvoke()
+
+    output = "\n".join(record.getMessage() for record in caplog.records)
+    assert "llm_call.started" in output
+    assert "llm_call.failed" in output
+    assert '"error_type":"RuntimeError"' in output
+    assert secret not in output
