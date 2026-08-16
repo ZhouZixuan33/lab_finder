@@ -15,7 +15,11 @@ from lab_tracker.db.connection import connect_database, transaction
 from lab_tracker.db.migrations import run_migrations
 from lab_tracker.models.professor import ProfessorCreate
 from lab_tracker.models.publication import PublicationCreate
-from lab_tracker.models.research import ResearchIdentity, ValidatedProfessorResearch
+from lab_tracker.models.research import (
+    ResearchIdentity,
+    SearchHit,
+    ValidatedProfessorResearch,
+)
 from lab_tracker.repositories.professors import ProfessorsRepository
 from lab_tracker.repositories.publications import PublicationsRepository
 from lab_tracker.services.discovery import FacultyCandidate, FacultyDiscoveryClient
@@ -33,6 +37,10 @@ from lab_tracker.services.research_graph import ProfessorResearchGraph
 from lab_tracker.services.research_sources import CandidateSourceRegistry
 from lab_tracker.services.research_tools import create_research_tools
 from lab_tracker.services.tavily_provider import TavilyProvider
+from lab_tracker.services.updates import (
+    PendingUpdateExistsError,
+    ProfessorUpdateService,
+)
 
 
 class DiscoveryProvider(Protocol):
@@ -79,6 +87,20 @@ class LangGraphCandidateResearcher:
         self.page_http = page_http
 
     async def research(self, candidate: FacultyCandidate) -> ValidatedProfessorResearch:
+        return await self._research(candidate, required_refresh=False)
+
+    async def research_with_refresh(
+        self,
+        candidate: FacultyCandidate,
+    ) -> ValidatedProfessorResearch:
+        return await self._research(candidate, required_refresh=True)
+
+    async def _research(
+        self,
+        candidate: FacultyCandidate,
+        *,
+        required_refresh: bool,
+    ) -> ValidatedProfessorResearch:
         identity = ResearchIdentity(
             name=candidate.name,
             email=candidate.email,
@@ -87,6 +109,21 @@ class LangGraphCandidateResearcher:
             official_profile_url=candidate.directory_profile_url,
         )
         registry = CandidateSourceRegistry()
+        registry.register_hit(
+            SearchHit(
+                title=f"Official UIUC profile for {candidate.name}",
+                url=candidate.directory_profile_url,
+                snippet="Official UIUC ECE faculty profile.",
+            )
+        )
+        preloaded_sources = []
+        initial_publications = []
+        if required_refresh:
+            refresh_hits = await self.tavily.search(
+                f"{candidate.name} UIUC ECE research lab publications"
+            )
+            preloaded_sources = registry.register_hits(refresh_hits)
+            initial_publications = await self.openalex.get_recent_publications(identity)
         page_extractor = PageExtractor(self.page_http, registry)
         tools = create_research_tools(
             identity=identity,
@@ -100,6 +137,8 @@ class LangGraphCandidateResearcher:
             chat_model=self.chat_model,
             tools=tools,
             registry=registry,
+            initial_publications=initial_publications,
+            preloaded_sources=preloaded_sources,
         ).ainvoke()
 
 
@@ -111,11 +150,13 @@ class UpdateCheckService:
         jobs: JobRegistry,
         discovery: DiscoveryProvider,
         researcher: CandidateResearchProvider,
+        professor_updates: ProfessorUpdateService | None = None,
     ) -> None:
         self.database_path = database_path
         self.jobs = jobs
         self.discovery = discovery
         self.researcher = researcher
+        self.professor_updates = professor_updates
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
     async def start_new(self) -> JobSnapshot:
@@ -129,6 +170,18 @@ class UpdateCheckService:
 
     async def get_job(self, job_id: str) -> JobSnapshot:
         return await self.jobs.get(job_id)
+
+    async def start_professor(self, professor_id: int) -> JobSnapshot:
+        if self.professor_updates is None:
+            raise RuntimeError("Single-professor updates are not configured")
+        self.professor_updates.validate_check_start(professor_id)
+        job = await self.jobs.create(JobScope.PROFESSOR, professor_id=professor_id)
+        task = asyncio.create_task(
+            self._run_professor(job.job_id, professor_id),
+            name=f"update-check-{job.job_id}",
+        )
+        self._tasks[job.job_id] = task
+        return job
 
     async def wait(self, job_id: str) -> None:
         task = self._tasks.get(job_id)
@@ -224,6 +277,36 @@ class UpdateCheckService:
 
         await self.jobs.complete_new(job_id)
 
+    async def _run_professor(self, job_id: str, professor_id: int) -> None:
+        await self.jobs.mark_running(job_id)
+        if self.professor_updates is None:
+            await self.jobs.fail(
+                job_id,
+                error_code="SINGLE_CHECK_NOT_CONFIGURED",
+                error_message="Single-professor updates are not configured.",
+            )
+            return
+        try:
+            changed, proposal_id = await self.professor_updates.check(professor_id, job_id)
+        except PendingUpdateExistsError as error:
+            await self.jobs.complete_professor(
+                job_id,
+                changed=True,
+                proposal_id=error.proposal_id,
+            )
+        except Exception as error:  # noqa: BLE001 - converted to terminal job state
+            code, message = self._job_level_error(
+                error,
+                default_code="PROFESSOR_CHECK_FAILED",
+            )
+            await self.jobs.fail(job_id, error_code=code, error_message=message)
+        else:
+            await self.jobs.complete_professor(
+                job_id,
+                changed=changed,
+                proposal_id=proposal_id,
+            )
+
     def _persist_professor(
         self,
         candidate: FacultyCandidate,
@@ -307,14 +390,17 @@ def build_default_update_check_service(
     if settings.llm_base_url is not None:
         chat_kwargs["base_url"] = str(settings.llm_base_url)
     chat_model = ChatOpenAI(**chat_kwargs)
+    researcher = LangGraphCandidateResearcher(
+        chat_model=chat_model,
+        tavily=tavily,
+        openalex=openalex,
+        page_http=page_http,
+    )
+    professor_updates = ProfessorUpdateService(settings.database_path, researcher)
     return UpdateCheckService(
         database_path=settings.database_path,
         jobs=jobs,
         discovery=FacultyDiscoveryClient(page_http),
-        researcher=LangGraphCandidateResearcher(
-            chat_model=chat_model,
-            tavily=tavily,
-            openalex=openalex,
-            page_http=page_http,
-        ),
+        researcher=researcher,
+        professor_updates=professor_updates,
     )

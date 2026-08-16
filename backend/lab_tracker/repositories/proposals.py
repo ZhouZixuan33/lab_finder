@@ -85,11 +85,33 @@ class ProposalsRepository:
         if page < 1 or not 1 <= page_size <= 100:
             raise ValueError("Invalid proposal pagination")
 
-        where = "status = 'pending'"
+        return self.list(
+            status=ProposalStatus.PENDING,
+            professor_id=professor_id,
+            page=page,
+            page_size=page_size,
+        )
+
+    def list(
+        self,
+        *,
+        status: ProposalStatus | None = None,
+        professor_id: int | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> tuple[list[ProposalRecord], int]:
+        if page < 1 or not 1 <= page_size <= 100:
+            raise ValueError("Invalid proposal pagination")
+
+        conditions: list[str] = []
         parameters: list[object] = []
+        if status is not None:
+            conditions.append("status = ?")
+            parameters.append(status.value)
         if professor_id is not None:
-            where += " AND professor_id = ?"
+            conditions.append("professor_id = ?")
             parameters.append(professor_id)
+        where = " AND ".join(conditions) or "1 = 1"
 
         total = self.connection.execute(
             f"SELECT COUNT(*) FROM update_proposals WHERE {where}",

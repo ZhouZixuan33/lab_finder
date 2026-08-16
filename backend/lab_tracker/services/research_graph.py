@@ -14,6 +14,7 @@ from lab_tracker.models.research import (
     ExtractedPage,
     OpenAlexPublication,
     ProfessorResearchResult,
+    RegisteredSource,
     ResearchIdentity,
     SearchHit,
     ValidatedProfessorResearch,
@@ -67,10 +68,14 @@ class ProfessorResearchGraph:
         chat_model: ResearchChatModel,
         tools: Sequence[BaseTool],
         registry: CandidateSourceRegistry,
+        initial_publications: Sequence[OpenAlexPublication] = (),
+        preloaded_sources: Sequence[RegisteredSource] = (),
     ) -> None:
         self.identity = identity
         self.registry = registry
         self.tools = list(tools)
+        self.initial_publications = list(initial_publications)
+        self.preloaded_sources = list(preloaded_sources)
         self.official_source = registry.register_hit(
             SearchHit(
                 title=f"Official UIUC profile for {identity.name}",
@@ -120,13 +125,14 @@ class ProfessorResearchGraph:
             "messages": build_agent_messages(
                 self.identity,
                 official_source_id=self.official_source.source_id,
+                preloaded_sources=self.preloaded_sources,
             ),
             "turn_count": 0,
             "search_calls": 0,
             "page_source_ids_attempted": [],
             "openalex_calls": 0,
             "pages": [],
-            "publications": [],
+            "publications": list(self.initial_publications),
             "recorded_tool_call_ids": [],
             "guard_allowed": False,
             "force_finalize": False,

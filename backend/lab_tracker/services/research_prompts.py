@@ -1,17 +1,29 @@
 """Prompts for the bounded research agent and evidence-only finalizer."""
 
 import json
+from collections.abc import Sequence
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
-from lab_tracker.models.research import ExtractedPage, OpenAlexPublication, ResearchIdentity
+from lab_tracker.models.research import (
+    ExtractedPage,
+    OpenAlexPublication,
+    RegisteredSource,
+    ResearchIdentity,
+)
 
 
 def build_agent_messages(
     identity: ResearchIdentity,
     *,
     official_source_id: str,
+    preloaded_sources: Sequence[RegisteredSource] = (),
 ) -> list[BaseMessage]:
+    preloaded_text = "none"
+    if preloaded_sources:
+        preloaded_text = ", ".join(
+            f"{source.source_id} ({source.title})" for source in preloaded_sources
+        )
     system_prompt = f"""
 You are researching exactly one UIUC ECE professor.
 
@@ -22,6 +34,7 @@ Fixed identity (never modify or override it):
 - Affiliation: {identity.affiliation}
 - Official profile: {identity.official_profile_url}
 - Registered official profile source ID: {official_source_id}
+- Server-refreshed search sources already available: {preloaded_text}
 
 Use only these tools: search_professor_web, extract_candidate_page,
 get_recent_publications. You may perform at most 3 searches, open at most 5 unique

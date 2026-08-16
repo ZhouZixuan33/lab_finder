@@ -12,6 +12,7 @@ from lab_tracker.services.jobs import (
     JobScope,
     JobSnapshot,
 )
+from lab_tracker.services.updates import PendingUpdateExistsError
 
 router = APIRouter(prefix="/api/update-checks", tags=["updates"])
 
@@ -20,6 +21,8 @@ class UpdateCheckServiceProtocol(Protocol):
     async def start_new(self) -> JobSnapshot: ...
 
     async def get_job(self, job_id: str) -> JobSnapshot: ...
+
+    async def start_professor(self, professor_id: int) -> JobSnapshot: ...
 
 
 def get_update_check_service(request: Request) -> UpdateCheckServiceProtocol:
@@ -48,20 +51,24 @@ async def start_update_check(
     request: StartUpdateCheckRequest,
     service: Annotated[UpdateCheckServiceProtocol, Depends(get_update_check_service)],
 ) -> StartUpdateCheckResponse:
-    if request.scope is not JobScope.NEW:
-        raise AppError(
-            code="UNSUPPORTED_UPDATE_SCOPE",
-            message="Single-professor checks are not available yet.",
-            status_code=400,
-        )
     try:
-        job = await service.start_new()
+        if request.scope is JobScope.NEW:
+            job = await service.start_new()
+        else:
+            job = await service.start_professor(request.professor_id)  # type: ignore[arg-type]
     except ActiveJobError as error:
         raise AppError(
             code="UPDATE_ALREADY_RUNNING",
             message="Another update check is already running.",
             status_code=409,
             details={"job_id": error.active_job_id},
+        ) from error
+    except PendingUpdateExistsError as error:
+        raise AppError(
+            code="PENDING_UPDATE_EXISTS",
+            message="This professor already has a pending update proposal.",
+            status_code=409,
+            details={"proposal_id": error.proposal_id},
         ) from error
     return StartUpdateCheckResponse(job_id=job.job_id)
 

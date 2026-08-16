@@ -66,3 +66,13 @@ class PublicationsRepository:
             (professor_id,),
         )
         return cursor.rowcount
+
+    def replace_for_professor(
+        self,
+        professor_id: int,
+        publications: Sequence[PublicationCreate],
+        *,
+        now: datetime | None = None,
+    ) -> list[PublicationRecord]:
+        self.delete_for_professor(professor_id)
+        return self.create_many(professor_id, publications, now=now)

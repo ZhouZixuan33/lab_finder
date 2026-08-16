@@ -11,6 +11,7 @@ from lab_tracker.api.applications import router as applications_router
 from lab_tracker.api.health import router as health_router
 from lab_tracker.api.professors import router as professors_router
 from lab_tracker.api.update_checks import router as update_checks_router
+from lab_tracker.api.update_proposals import router as update_proposals_router
 from lab_tracker.config import Settings, get_settings
 from lab_tracker.db.connection import connect_database
 from lab_tracker.db.migrations import run_migrations
@@ -45,6 +46,11 @@ def create_app(
                 http_client=external_http,
             )
         application.state.update_check_service = service
+        application.state.professor_update_service = getattr(
+            service,
+            "professor_updates",
+            None,
+        )
         try:
             yield
         finally:
@@ -62,6 +68,7 @@ def create_app(
     application.include_router(professors_router)
     application.include_router(applications_router)
     application.include_router(update_checks_router)
+    application.include_router(update_proposals_router)
     return application
 
 

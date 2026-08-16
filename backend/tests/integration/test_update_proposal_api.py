@@ -1,0 +1,332 @@
+import time
+from datetime import UTC, date, datetime
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from lab_tracker.config import Settings
+from lab_tracker.db.connection import connect_database
+from lab_tracker.db.migrations import run_migrations
+from lab_tracker.main import create_app
+from lab_tracker.models.application import ApplicationUpsert
+from lab_tracker.models.common import ApplicationState, ProposalStatus
+from lab_tracker.models.professor import ProfessorCreate
+from lab_tracker.models.publication import PublicationCreate
+from lab_tracker.models.research import OpenAlexPublication, ValidatedProfessorResearch
+from lab_tracker.models.update import ProposalCreate
+from lab_tracker.repositories.applications import ApplicationsRepository
+from lab_tracker.repositories.professors import ProfessorsRepository
+from lab_tracker.repositories.proposals import ProposalsRepository
+from lab_tracker.repositories.publications import PublicationsRepository
+from lab_tracker.services.diff import ProfessorUpdateSnapshot, PublicationDifference
+from lab_tracker.services.discovery import FacultyCandidate
+from lab_tracker.services.jobs import JobRegistry
+from lab_tracker.services.update_checks import UpdateCheckService
+from lab_tracker.services.updates import ProfessorUpdateService
+
+NOW = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+
+
+class EmptyDiscovery:
+    async def discover(self) -> list[FacultyCandidate]:
+        return []
+
+
+class RefreshResearcher:
+    def __init__(self, result: ValidatedProfessorResearch) -> None:
+        self.result = result
+        self.normal_calls = 0
+        self.refresh_calls = 0
+
+    async def research(self, _candidate: FacultyCandidate) -> ValidatedProfessorResearch:
+        self.normal_calls += 1
+        return self.result
+
+    async def research_with_refresh(
+        self,
+        _candidate: FacultyCandidate,
+    ) -> ValidatedProfessorResearch:
+        self.refresh_calls += 1
+        return self.result
+
+
+def runtime_settings(database_path: Path) -> Settings:
+    return Settings(
+        _env_file=None,
+        database_path=database_path,
+        llm_api_key="test-llm-key",
+        llm_model="test-model",
+        tavily_api_key="test-tavily-key",
+        openalex_api_key="test-openalex-key",
+    )
+
+
+def seed_professor(database_path: Path) -> int:
+    with connect_database(database_path) as connection:
+        run_migrations(connection)
+        professor = ProfessorsRepository(connection).create(
+            ProfessorCreate(
+                name="Alice Systems",
+                title="Professor",
+                email="alice@illinois.edu",
+                directory_profile_url="https://ece.illinois.edu/alice",
+                homepage_url="https://alice.example.edu",
+                lab_url="https://alice.example.edu/lab",
+                research_summary=(
+                    "Alice studies reliable computer architecture and secure accelerators."
+                ),
+                tags=["Architecture"],
+                source_urls=["https://ece.illinois.edu/alice"],
+                source_hash="old-hash",
+            ),
+            now=NOW,
+        )
+        PublicationsRepository(connection).create_many(
+            professor.id,
+            [
+                PublicationCreate(
+                    title="Old Paper",
+                    year=2025,
+                    source="openalex",
+                )
+            ],
+            now=NOW,
+        )
+        ApplicationsRepository(connection).upsert(
+            professor.id,
+            ApplicationUpsert(
+                state=ApplicationState.APPLIED,
+                application_date=date(2026, 8, 15),
+                notes="Application submitted.",
+            ),
+            now=NOW,
+        )
+        return professor.id
+
+
+def changed_research() -> ValidatedProfessorResearch:
+    return ValidatedProfessorResearch(
+        research_summary=(
+            "Alice studies dependable AI accelerators and fault-tolerant computer systems."
+        ),
+        tags=["Reliable AI", "Computer Architecture"],
+        homepage_url="https://alice.example.edu",
+        lab_url="https://alice.example.edu/new-lab",
+        publications=[
+            OpenAlexPublication(
+                source_id="openalex:W2",
+                openalex_id="W2",
+                title="Dependable AI Hardware",
+                year=2026,
+                publication_url="https://openalex.org/W2",
+            )
+        ],
+        source_urls=["https://alice.example.edu", "https://alice.example.edu/new-lab"],
+        confidence=0.92,
+    )
+
+
+def build_client(
+    database_path: Path,
+    research: ValidatedProfessorResearch,
+) -> tuple[TestClient, RefreshResearcher, int]:
+    professor_id = seed_professor(database_path)
+    researcher = RefreshResearcher(research)
+    professor_updates = ProfessorUpdateService(database_path, researcher)
+    checks = UpdateCheckService(
+        database_path=database_path,
+        jobs=JobRegistry(),
+        discovery=EmptyDiscovery(),
+        researcher=researcher,
+        professor_updates=professor_updates,
+    )
+    app = create_app(
+        settings=runtime_settings(database_path),
+        update_check_service=checks,
+    )
+    return TestClient(app), researcher, professor_id
+
+
+def wait_for_job(client: TestClient, job_id: str) -> dict[str, object]:
+    for _attempt in range(100):
+        payload = client.get(f"/api/update-checks/{job_id}").json()
+        if payload["status"] in {"completed", "failed"}:
+            return payload
+        time.sleep(0.01)
+    raise AssertionError("Update job did not finish")
+
+
+def test_single_check_creates_pending_without_writes_then_apply_is_atomic(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "proposal-apply.db"
+    client, researcher, professor_id = build_client(database_path, changed_research())
+
+    with client:
+        started = client.post(
+            "/api/update-checks",
+            json={"scope": "professor", "professor_id": professor_id},
+        )
+        completed = wait_for_job(client, started.json()["job_id"])
+        proposal_id = completed["proposal_id"]
+        detail_before = client.get(f"/api/professors/{professor_id}").json()
+        pending_list = client.get(
+            "/api/update-proposals",
+            params={"status": "pending", "professor_id": professor_id},
+        )
+        conflict = client.post(
+            "/api/update-checks",
+            json={"scope": "professor", "professor_id": professor_id},
+        )
+        proposal = client.get(f"/api/update-proposals/{proposal_id}")
+        applied = client.post(f"/api/update-proposals/{proposal_id}/apply")
+        repeated = client.post(f"/api/update-proposals/{proposal_id}/apply")
+        detail_after = client.get(f"/api/professors/{professor_id}").json()
+
+    assert started.status_code == 202
+    assert completed["status"] == "completed"
+    assert completed["changed"] is True
+    assert researcher.refresh_calls == 1
+    assert researcher.normal_calls == 0
+    assert detail_before["research_summary"].startswith("Alice studies reliable")
+    assert detail_before["application"]["state"] == "applied"
+    assert pending_list.status_code == 200
+    assert pending_list.json()["pagination"]["total"] == 1
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "PENDING_UPDATE_EXISTS"
+    assert conflict.json()["error"]["details"]["proposal_id"] == proposal_id
+    assert proposal.json()["new_values"]["lab_url"].endswith("/new-lab")
+    assert applied.status_code == 200
+    assert applied.json()["status"] == "applied"
+    assert repeated.status_code == 409
+    assert repeated.json()["error"]["code"] == "PROPOSAL_NOT_PENDING"
+    assert detail_after["research_summary"].startswith("Alice studies dependable")
+    assert [item["title"] for item in detail_after["publications"]] == [
+        "Dependable AI Hardware"
+    ]
+    assert detail_after["application"] == detail_before["application"]
+
+
+def test_no_difference_returns_changed_false_and_reject_is_one_way(tmp_path: Path) -> None:
+    database_path = tmp_path / "proposal-no-change.db"
+    unchanged = ValidatedProfessorResearch(
+        research_summary="Alice studies reliable computer architecture and secure accelerators.",
+        tags=["Architecture"],
+        homepage_url="https://alice.example.edu",
+        lab_url="https://alice.example.edu/lab",
+        publications=[
+            OpenAlexPublication(
+                source_id="openalex:W1",
+                openalex_id="W1",
+                title="Old Paper",
+                year=2025,
+            )
+        ],
+        source_urls=["https://ece.illinois.edu/alice"],
+    )
+    client, researcher, professor_id = build_client(database_path, unchanged)
+
+    with client:
+        started = client.post(
+            "/api/update-checks",
+            json={"scope": "professor", "professor_id": professor_id},
+        )
+        completed = wait_for_job(client, started.json()["job_id"])
+        proposals = client.get(
+            "/api/update-proposals",
+            params={"professor_id": professor_id},
+        ).json()
+
+    assert completed["changed"] is False
+    assert completed["proposal_id"] is None
+    assert proposals["pagination"]["total"] == 0
+    assert researcher.refresh_calls == 1
+
+
+def test_reject_marks_pending_and_cannot_be_repeated(tmp_path: Path) -> None:
+    database_path = tmp_path / "proposal-reject.db"
+    client, _researcher, professor_id = build_client(database_path, changed_research())
+
+    with client:
+        started = client.post(
+            "/api/update-checks",
+            json={"scope": "professor", "professor_id": professor_id},
+        )
+        proposal_id = wait_for_job(client, started.json()["job_id"])["proposal_id"]
+        rejected = client.post(f"/api/update-proposals/{proposal_id}/reject")
+        repeated = client.post(f"/api/update-proposals/{proposal_id}/reject")
+        detail = client.get(f"/api/professors/{professor_id}").json()
+
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == ProposalStatus.REJECTED
+    assert repeated.status_code == 409
+    assert detail["research_summary"].startswith("Alice studies reliable")
+    assert detail["application"]["notes"] == "Application submitted."
+
+
+def test_apply_constraint_failure_rolls_back_and_keeps_proposal_pending(tmp_path: Path) -> None:
+    database_path = tmp_path / "proposal-rollback.db"
+    client, _researcher, professor_id = build_client(database_path, changed_research())
+
+    with connect_database(database_path) as connection:
+        second = ProfessorsRepository(connection).create(
+            ProfessorCreate(
+                name="Bob Circuits",
+                title="Professor",
+                directory_profile_url="https://ece.illinois.edu/bob",
+                research_summary="Bob studies integrated circuits and electronic systems.",
+                source_hash="bob-hash",
+            ),
+            now=NOW,
+        )
+        current = ProfessorsRepository(connection).get(professor_id)
+        assert current is not None
+        old_values = ProfessorUpdateSnapshot(
+            name=current.name,
+            title=current.title,
+            email=current.email,
+            directory_profile_url=current.directory_profile_url,
+            homepage_url=current.homepage_url,
+            lab_url=current.lab_url,
+            research_summary=current.research_summary,
+            tags=current.tags,
+            source_urls=current.source_urls,
+            source_hash=current.source_hash,
+        )
+        new_values = old_values.model_copy(
+            update={
+                "directory_profile_url": second.directory_profile_url,
+                "research_summary": "This write must roll back because the URL is duplicated.",
+                "source_hash": "conflicting-hash",
+            }
+        )
+        proposal = ProposalsRepository(connection).create_pending(
+            ProposalCreate(
+                job_id="rollback-job",
+                professor_id=professor_id,
+                old_values=old_values.model_dump(mode="json"),
+                new_values=new_values.model_dump(mode="json"),
+                publication_diff=PublicationDifference(proposed=[]).model_dump(mode="json"),
+                source_urls=new_values.source_urls,
+            ),
+            now=NOW,
+        )
+
+    with client:
+        failed = client.post(f"/api/update-proposals/{proposal.id}/apply")
+        missing = client.get("/api/update-proposals/99999")
+
+    assert failed.status_code == 500
+    assert failed.json()["error"]["code"] == "PROPOSAL_APPLY_FAILED"
+    assert missing.status_code == 404
+    with connect_database(database_path) as connection:
+        current_after = ProfessorsRepository(connection).get(professor_id)
+        pending_after = ProposalsRepository(connection).get(proposal.id)
+        publications_after = PublicationsRepository(connection).list_for_professor(professor_id)
+        application_after = ApplicationsRepository(connection).get(professor_id)
+    assert current_after is not None
+    assert current_after.directory_profile_url == "https://ece.illinois.edu/alice"
+    assert current_after.research_summary.startswith("Alice studies reliable")
+    assert pending_after is not None and pending_after.status is ProposalStatus.PENDING
+    assert [item.title for item in publications_after] == ["Old Paper"]
+    assert application_after is not None and application_after.state is ApplicationState.APPLIED

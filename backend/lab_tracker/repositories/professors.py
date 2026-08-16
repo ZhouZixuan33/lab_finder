@@ -106,6 +106,40 @@ class ProfessorsRepository:
         ).fetchall()
         return [_professor_from_row(row) for row in rows]
 
+    def update(
+        self,
+        professor_id: int,
+        professor: ProfessorCreate,
+        *,
+        now: datetime | None = None,
+    ) -> ProfessorRecord | None:
+        timestamp = _timestamp(now or datetime.now(UTC))
+        cursor = self.connection.execute(
+            """
+            UPDATE professors
+            SET name = ?, title = ?, email = ?, directory_profile_url = ?,
+                homepage_url = ?, lab_url = ?, research_summary = ?, tags_json = ?,
+                source_urls_json = ?, source_hash = ?, last_checked_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                professor.name,
+                professor.title,
+                professor.email,
+                professor.directory_profile_url,
+                professor.homepage_url,
+                professor.lab_url,
+                professor.research_summary,
+                _json(professor.tags),
+                _json(professor.source_urls),
+                professor.source_hash,
+                timestamp,
+                timestamp,
+                professor_id,
+            ),
+        )
+        return self.get(professor_id) if cursor.rowcount > 0 else None
+
     def list(
         self,
         *,
