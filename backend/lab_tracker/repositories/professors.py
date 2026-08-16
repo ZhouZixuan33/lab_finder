@@ -100,6 +100,12 @@ class ProfessorsRepository:
         ).fetchone()
         return _professor_from_row(row) if row is not None else None
 
+    def list_all(self) -> list[ProfessorRecord]:
+        rows = self.connection.execute(
+            "SELECT * FROM professors ORDER BY id ASC"
+        ).fetchall()
+        return [_professor_from_row(row) for row in rows]
+
     def list(
         self,
         *,
