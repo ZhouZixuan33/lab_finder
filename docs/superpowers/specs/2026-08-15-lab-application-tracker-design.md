@@ -150,16 +150,19 @@ LLM_API_KEY
 LLM_MODEL
 TAVILY_API_KEY
 OPENALEX_API_KEY
+TAVILY_MIN_INTERVAL_SECONDS=1.0
+OPENALEX_MIN_INTERVAL_SECONDS=1.0
+WEB_HOST_MIN_INTERVAL_SECONDS=1.0
 ```
 
-`LLM_API_KEY`、`LLM_MODEL`、`TAVILY_API_KEY` 和 `OPENALEX_API_KEY` 必填；`LLM_BASE_URL` 只在使用符合 OpenAI API 规范的兼容端点时填写，使用官方 OpenAI 时留空。Tavily 和 OpenAlex 的 API key 都可以使用免费账户获取。`.env` 和 SQLite 数据文件必须加入 `.gitignore`。密钥不会传给前端、写入数据库或出现在日志中。
+`LLM_API_KEY`、`LLM_MODEL`、`TAVILY_API_KEY` 和 `OPENALEX_API_KEY` 必填；`LLM_BASE_URL` 只在使用符合 OpenAI API 规范的兼容端点时填写，使用官方 OpenAI 时留空。三个间隔设置为可选项，未配置时均默认为 1.0 秒，并且配置校验不允许小于 1.0。Tavily 和 OpenAlex 的 API key 都可以使用免费账户获取。`.env` 和 SQLite 数据文件必须加入 `.gitignore`。密钥不会传给前端、写入数据库或出现在日志中。
 
 MVP 默认只使用免费额度，不启用自动付费或超额计费：
 
 - Tavily Researcher 免费计划当前提供每月 1,000 API credits。`search_professor_web` 固定使用 `search_depth="basic"`、`max_results=5`、`include_answer=false`、`include_raw_content=false` 和 `include_images=false`；模型不能覆盖这些参数。每位教授最多三次搜索，因此约 100 位教授的首次采集至多消耗约 300 个 Tavily credits。正文由本应用使用 httpx 抓取，不调用非必要的 Tavily Extract/Crawl 接口。
 - OpenAlex 当前要求免费 API key，并为每个 key 提供每天 1 美元的免费用量。单条实体读取免费；list/filter 为每 1,000 次 0.10 美元，search 为每 1,000 次 1 美元。实现优先使用 author/works filter、字段选择、分页和缓存，避免重复搜索。
 - 免费额度和价格属于外部服务配置，可能变化；上线实现前以供应商官方文档为准。
-- 遇到额度耗尽或 429 时，任务以明确的 `EXTERNAL_QUOTA_EXCEEDED` 错误结束，不自动切换付费方案，也不写入部分数据。用户可在额度重置后重试。
+- 短时 429 按 `Retry-After` 有限重试；明确的日/月额度耗尽以 `EXTERNAL_QUOTA_EXCEEDED` 停止剩余批处理，不自动切换付费方案。已经按单教授事务提交的数据保留，当前教授及尚未处理的教授不会写入，用户可在额度重置后重试。
 - Tavily 和 OpenAlex 的免费额度不包含 LLM 调用费用；LLM 是否收费取决于用户配置的模型供应商。
 - Research Agent 常规预计每位教授产生 2 至 5 次模型调用；硬上限为 8 个 agent turns 加最多 3 次 `finalize_research` 尝试。网络层重试另行计数并保持有限。实际费用取决于模型、网页证据长度和工具循环次数。
 
@@ -204,7 +207,7 @@ load_official_profile
 - `scope=new` 允许 Agent 在官方证据已经充分时少用工具；`scope=professor` 的 guard 在至少一次 Tavily 刷新和一次 OpenAlex 刷新成功前不允许主动结束研究，以保证单人检查确实寻找新增来源和论文。
 - 达到工具预算后强制转到 `finalize_research`。证据不足时链接返回 `null`；如果连可靠研究摘要都无法产生，则该教授处理失败，禁止模型猜测。
 - MVP 不启用 LangGraph checkpointer 或持久化。实时 job 仍由内存 `jobs` 模块管理；图成功返回并通过业务校验后，service 才开启 SQLite 事务。
-- scope=new 对每位新增候选运行图并在全部成功后一次性写入；scope=professor 将图输出与当前记录比较并创建 proposal。
+- scope=new 严格串行地对每位新增候选运行图；每位教授成功后立即以独立事务写入教授及论文，单人失败只记录失败并继续下一位。scope=professor 将图输出与当前记录比较并创建 proposal。
 
 #### 6.1.1 教授信息获取流程图
 
@@ -213,7 +216,8 @@ flowchart TD
     job(["开始 update-check job"]) --> scope{"任务范围？"}
     scope -->|"scope=new"| discover["扫描 UIUC ECE 教师目录"]
     discover --> skip["跳过数据库中已存在的教授"]
-    skip --> candidate["建立新增教授身份种子"]
+    skip --> has_new{"存在新增候选？"}
+    has_new -->|"是"| candidate["建立新增教授身份种子"]
     scope -->|"scope=professor"| current["读取指定教授当前资料"]
 
     candidate --> load
@@ -259,20 +263,33 @@ flowchart TD
         retry -->|"是：重新生成结构化结果"| final_llm
     end
 
-    retry -->|"否"| failed["任务失败<br/>不写入教授、论文或 proposal"]
-    guard -->|"非法工具参数或重复越权调用"| failed
-    search_tool -->|"额度或请求失败"| failed
-    extract_tool -->|"页面抓取失败且无法降级"| failed
-    publication_tool -->|"论文请求失败且无法降级"| failed
-    agent -->|"模型请求失败或超过 8 turns"| failed
-    final_llm -->|"模型请求失败"| failed
+    retry -->|"否"| professor_failed["本教授处理失败<br/>不写入该教授或 proposal"]
+    guard -->|"非法工具参数或重复越权调用"| professor_failed
+    search_tool -->|"可恢复请求失败"| professor_failed
+    extract_tool -->|"页面抓取失败且无法降级"| professor_failed
+    publication_tool -->|"可恢复请求失败且无法降级"| professor_failed
+    agent -->|"模型请求失败或超过 8 turns"| professor_failed
+    final_llm -->|"模型请求失败"| professor_failed
+    search_tool -->|"额度耗尽或配置错误"| job_failed
+    publication_tool -->|"额度耗尽或配置错误"| job_failed
+    agent -->|"模型额度耗尽或配置错误"| job_failed
+    final_llm -->|"模型额度耗尽或配置错误"| job_failed
+    discover -->|"目录请求失败"| job_failed
 
     finalize --> persist{"调用来源？"}
-    persist -->|"scope=new"| batch["加入本次新增批次"]
-    batch --> all_valid{"全部新增候选都成功？"}
-    all_valid -->|"否"| failed
-    all_valid -->|"是"| insert["BEGIN IMMEDIATE<br/>一次性插入 professors 与 publications"]
-    insert --> added(["完成：返回 added_count"])
+    persist -->|"scope=new"| insert_one["BEGIN IMMEDIATE<br/>写入一位 professor 与 publications"]
+    insert_one -->|"提交成功"| record_success["processed_count += 1<br/>added_count += 1"]
+    insert_one -->|"约束或写入失败并回滚本教授"| record_failure["processed_count += 1<br/>failed_count += 1"]
+
+    professor_failed --> failure_scope{"调用来源？"}
+    failure_scope -->|"scope=new"| record_failure
+    failure_scope -->|"scope=professor"| job_failed["任务失败<br/>保留已提交数据并返回当前计数"]
+
+    record_success --> more{"还有新增候选？"}
+    record_failure --> more
+    more -->|"是：严格串行处理下一位"| candidate
+    more -->|"否"| batch_summary(["完成批次<br/>返回 added_count 与 failed_count"])
+    has_new -->|"否"| batch_summary
 
     persist -->|"scope=professor"| compare["与当前教授字段和论文比较"]
     compare --> changed{"存在真实差异？"}
@@ -281,7 +298,7 @@ flowchart TD
     proposal --> reviewed(["等待用户确认或拒绝"])
 ```
 
-虚线表示外部来源或现有上下文。标记为“调用大模型”的 `research_agent` 会在每次工具结果返回后重新判断是否继续，因此可能调用多次；`finalize_research` 单独生成 Pydantic 结构化结果，格式失败时最多再调用两次。三个 ToolNode 只执行受限网页搜索、页面提取和 OpenAlex 查询，不是本应用的 LLM 调用。`finalize` 只组装经过验证的 `final_record`，不执行 SQL；数据库写入仍发生在图外 service 层。新增教授采用整批事务，单人检查只创建待确认 proposal。
+虚线表示外部来源或现有上下文。标记为“调用大模型”的 `research_agent` 会在每次工具结果返回后重新判断是否继续，因此可能调用多次；`finalize_research` 单独生成 Pydantic 结构化结果，格式失败时最多再调用两次。三个 ToolNode 只执行受限网页搜索、页面提取和 OpenAlex 查询，不是本应用的 LLM 调用。`finalize` 只组装经过验证的 `final_record`，不执行 SQL；数据库写入仍发生在图外 service 层。新增教授严格串行处理，每位成功教授各自使用一个短事务；单人失败不会撤销此前成功提交的教授。单人检查只创建待确认 proposal。
 
 #### 6.1.2 Research Agent prompt 约束
 
@@ -324,7 +341,7 @@ ID 在单次 job 内稳定且不可由模型指定。ToolNode 返回错误时使
 2. 官方详情页邮箱的小写值完全匹配。
 3. 规范化姓名与 UIUC ECE 隶属关系同时匹配。
 
-如果后两种规则命中多个教授，视为歧义并使本次新增操作失败，不创建重复记录。
+如果后两种规则命中多个教授，视为歧义并使当前教授候选处理失败，不创建重复记录；scope=new 继续处理下一位候选。
 
 ### 6.4 主页和实验室链接发现
 
@@ -387,13 +404,16 @@ ID 在单次 job 内稳定且不可由模型指定。ToolNode 返回错误时使
 1. 用户在教授列表点击“Find new professors”。
 2. 前端调用 `POST /api/update-checks`，scope 为 `new`。
 3. 后端扫描目录并跳过全部现有教授。
-4. 后端在写数据库前完成所有新教授的数据收集和校验。
-5. 所有新教授在一个 SQLite 事务中写入；任一新增教授处理失败时不写入任何新教授。
-6. 前端静默轮询任务，不显示独立页面、进度条、已有教授或新增教授明细。
-7. 成功后刷新教授列表：
-   - 添加数量大于零：显示“新增成功：已添加 N 位教授”。
+4. 后端使用普通串行循环逐位运行 LangGraph；禁止用 `asyncio.gather`、TaskGroup 或其他方式并发处理多位教授。
+5. 每位教授成功完成采集和业务校验后，立即开启独立 SQLite 事务，原子写入该教授及其论文。事务提交后再处理下一位。
+6. 某位教授处理或写入失败时，只回滚该教授的事务、增加 `failed_count` 并继续下一位；此前成功提交的数据保留，下次检查会跳过这些教授并重试失败者。
+7. 前端轮询任务时，按钮显示 Spinner 和“Checking for new professors…”，同时保持禁用；不显示独立任务页、进度条、已有教授或新增教授明细。
+8. 批次正常结束后刷新教授列表并显示一个结果通知：
+   - `added_count > 0` 且 `failed_count = 0`：显示“新增成功：已添加 N 位教授”。
+   - `added_count > 0` 且 `failed_count > 0`：显示“检查完成：新增 N 位教授，M 位处理失败，可稍后重试”。
    - 没有新教授：显示“查找成功：没有新教授”。
-8. 失败时显示“新增失败：数据库未发生变化”。
+   - `added_count = 0` 且 `failed_count > 0`：显示“新增失败：M 位教授处理失败，可稍后重试”。
+9. 目录不可用、API key 配置错误或免费额度耗尽属于 job 级故障，立即停止剩余批次并返回 `failed`；此前已经按单教授事务提交的数据不回滚，通知同时说明已添加数量和停止原因。
 
 ### 7.3 检查单个教授
 
@@ -479,13 +499,12 @@ ID 在单次 job 内稳定且不可由模型指定。ToolNode 返回错误时使
 | `id` | INTEGER PK | `proposal_id` |
 | `job_id` | TEXT NOT NULL | 创建它的内存任务 UUID，不是外键 |
 | `professor_id` | INTEGER NOT NULL FK | 被检查教授 |
-| `status` | TEXT NOT NULL CHECK | pending/applied/rejected/failed |
+| `status` | TEXT NOT NULL CHECK | pending/applied/rejected |
 | `old_values_json` | TEXT NULL | 当前字段快照 |
 | `new_values_json` | TEXT NULL | 候选字段快照 |
 | `publication_diff_json` | TEXT NULL | 新增和移除论文 |
 | `source_urls_json` | TEXT NOT NULL DEFAULT `'[]'` | 候选来源 |
 | `confidence` | REAL NULL CHECK | 0 到 1 |
-| `error_message` | TEXT NULL | 失败原因 |
 | `created_at` | DATETIME NOT NULL | 创建时间 |
 | `resolved_at` | DATETIME NULL | 应用或拒绝时间 |
 
@@ -576,21 +595,39 @@ q, tags, state, page, page_size, sort, order
 {"scope": "professor", "professor_id": 123}
 ```
 
-返回 `202 Accepted` 和 UUID `job_id`。已有任务运行时返回 `409 UPDATE_ALREADY_RUNNING`；单人已有 pending 时返回 `409 PENDING_UPDATE_EXISTS`。
+返回 `202 Accepted` 和 UUID `job_id`。已有任务运行时返回 `409 UPDATE_ALREADY_RUNNING`，错误详情包含当前 `job_id` 供前端恢复轮询；单人已有 pending 时返回 `409 PENDING_UPDATE_EXISTS`。
 
 #### `GET /api/update-checks/{job_id}`
 
 返回 queued/running/completed/failed 状态。
 
-- scope=new 时，前端静默轮询，仅使用最终 `added_count` 或错误显示通知并刷新列表。
+- scope=new 正常完成时返回 `outcome`、`discovered_count`、`processed_count`、`added_count` 和 `failed_count`。`outcome` 只允许 `success`、`partial_success`、`no_changes` 或 `all_failed`；单人失败后继续处理，因此即使部分或全部候选处理失败，只要批次循环正常结束，job 状态仍为 `completed`。
+- scope=new 遇到 job 级故障时状态为 `failed`，响应仍返回截至停止时的计数和错误代码；已经提交的教授保留。
 - scope=professor 时，完成响应返回 `proposal_id` 或 `changed=false`。
 - 服务重启后未知 job 返回 404。
+
+scope=new 部分成功示例：
+
+```json
+{
+  "status": "completed",
+  "outcome": "partial_success",
+  "discovered_count": 10,
+  "processed_count": 10,
+  "added_count": 9,
+  "failed_count": 1
+}
+```
+
+正常完成时 `processed_count = discovered_count` 且 `added_count + failed_count = processed_count`；job 级故障提前停止时 `processed_count` 可以小于 `discovered_count`。
+
+outcome 的计算是确定性的：没有新增候选为 `no_changes`；全部候选成功为 `success`；成功和失败同时存在为 `partial_success`；有候选但全部处理失败为 `all_failed`。
 
 ### 9.5 单人更新候选
 
 #### `GET /api/update-proposals`
 
-支持 `status`、`professor_id`、`page` 和 `page_size`，用于详情页恢复 pending 状态和查询审计记录。
+支持 `status`、`professor_id`、`page` 和 `page_size`，其中 `status` 只允许 pending、applied 或 rejected，用于详情页恢复 pending 状态和查询审计记录。
 
 #### `GET /api/update-proposals/{proposal_id}`
 
@@ -598,7 +635,7 @@ q, tags, state, page, page_size, sort, order
 
 #### `POST /api/update-proposals/{proposal_id}/apply`
 
-事务性应用仍为 pending 的 proposal；否则返回 409。
+事务性应用仍为 pending 的 proposal；否则返回 409。事务失败时完整回滚并保持 pending，允许用户稍后重试。
 
 #### `POST /api/update-proposals/{proposal_id}/reject`
 
@@ -627,7 +664,7 @@ q, tags, state, page, page_size, sort, order
 - 点击姓名进入详情页。
 - 顶部“Find new professors”按钮。
 
-点击查找按钮后仍停留在列表页，不显示独立任务页或进度条。成功后刷新列表并显示成功通知；失败只显示失败通知。
+点击查找按钮后仍停留在列表页，不显示独立任务页或进度条。任务运行时按钮显示 Spinner 和“Checking for new professors…”，保持禁用，并在页面顶部显示低调的运行状态。前端把 `job_id` 保存到 `sessionStorage`，刷新页面后继续轮询；job 完成或返回 404 时清除它。完成后刷新列表，并根据全部成功、部分成功、没有新增或失败显示一个简洁通知，不展示教授明细。
 
 ### 10.3 教授详情页
 
@@ -659,23 +696,25 @@ q, tags, state, page, page_size, sort, order
 - 超时和 5xx 最多重试三次，使用指数退避和抖动。
 - 429 先读取供应商的限流响应；短时速率限制可以按 `Retry-After` 有限重试，明确的日/月额度耗尽不重试并返回 `EXTERNAL_QUOTA_EXCEEDED`。
 - 4xx 配置错误不自动重试。
-- 限制并发，避免对 UIUC 或个人站点造成高请求压力。
+- scope=new 严格串行处理教授，禁止同时运行多个教授的 LangGraph。
+- Tavily、OpenAlex 和网页抓取各自使用 `asyncio.Semaphore(1)`，同一 provider 同时最多一个在途请求；provider limiter 同时执行最小请求间隔。
+- Tavily 与 OpenAlex 默认相邻请求至少间隔 1.0 秒；普通网页抓取按 hostname 限速，同域请求默认至少间隔 1.0 秒。三个值可通过第 5 节配置提高，但不能设置为零或负数；不使用提高并发的方式补偿超时。
 - 设置清晰的 User-Agent 和联系邮箱。
 - Tavily 查询和 OpenAlex 作者解析结果按规范化查询缓存，单次 job 内不重复计费请求。
 - 所有工具在服务器端读取 API key；模型只看到工具名称、说明和最小参数 schema。
 - 工具返回内容按来源和字符数截断，网页正文标记为不可信数据；页面中的 prompt、操作指令或 API key 请求一律不执行。
 - `tool_budget_guard` 在 ToolNode 之前校验 candidate ID、工具调用次数和参数白名单；违规调用不会到达外部服务。
 
-### 11.2 新教授原子性
+### 11.2 新教授单人事务
 
-“查找新教授”在收集和验证全部新教授后才打开写事务。任何新教授的必需字段、LLM schema 或唯一性校验失败，都回滚本次所有新增，现有数据库保持不变。
+“查找新教授”的事务边界是一位教授，而不是整个批次。每位教授只有在 LangGraph 和业务校验全部通过后才执行 `BEGIN IMMEDIATE`，并在同一事务中写入 `professors` 与其 `publications`。该事务失败只回滚当前教授；成功提交的其他教授以及所有现有数据保持不变。批次任务在可恢复的单人错误后继续，在额度耗尽、配置错误或目录不可用等 job 级错误后提前停止。
 
 ### 11.3 单人更新安全
 
 - 抓取和 LLM 阶段不修改当前教授。
 - proposal 应用前重新检查状态。
 - 教授与论文在同一事务中更新。
-- 任何异常回滚事务，proposal 保持 pending 或记录 failed。
+- Apply 事务发生任何异常时完整回滚，proposal 保持 pending，API 返回错误以允许用户稍后重试。
 - 更新服务没有写 `application_status` 的 repository 权限。
 
 ### 11.4 日志
@@ -700,11 +739,13 @@ q, tags, state, page, page_size, sort, order
 - `scope=professor` 在成功完成至少一次 Tavily 和一次 OpenAlex 刷新前不能提前进入 `finalize_research`。
 - 格式或业务校验失败只重试 `finalize_research`，最多两次且不重新消费搜索额度。
 - 网页 prompt injection fixture 不能改变系统指令、工具参数或最终来源约束。
-- 外部额度耗尽直接失败且不进入数据库写入阶段。
+- 外部额度耗尽会停止剩余批次，不会写入当前教授，并保留此前已经提交的教授。
+- provider semaphore、最小请求间隔、`Retry-After` 和指数退避。
+- 三个最小请求间隔的默认值为 1.0 秒，配置值小于 1.0 时启动校验失败。
 - 作者消歧与论文三年窗口。
 - 论文去重和最多五篇规则。
 - source hash 和字段差异计算。
-- proposal 状态机。
+- proposal 状态机只允许 pending -> applied 或 pending -> rejected；Apply 事务失败后仍为 pending。
 
 ### 12.2 抓取测试
 
@@ -718,8 +759,9 @@ q, tags, state, page, page_size, sort, order
 - 验证 repository 只使用绑定参数，恶意搜索、筛选和排序输入不能改变 SQL 结构。
 - 验证连接启用外键、WAL 和 busy timeout，多步写入失败时事务完整回滚。
 - 验证四张表的外键、CHECK 和唯一约束。
-- scope=new 只插入新教授且失败时整体回滚。
+- scope=new 每位教授及其论文在独立事务中原子写入；单人失败只回滚该教授，之前成功提交的数据保留，后续候选继续处理。
 - scope=new 不调用现有教授的搜索、OpenAlex 或 LLM mock。
+- scope=new 严格串行，mock provider 的同时在途请求数始终不超过 1。
 - 单人 pending 唯一索引和重复点击 409。
 - 同时只能运行一个任务。
 - apply/reject 的事务性和幂等冲突。
@@ -729,9 +771,10 @@ q, tags, state, page, page_size, sort, order
 
 - 列表搜索、标签和状态筛选。
 - 无申请记录显示 `—`。
-- 查找新教授期间无进度页或进度条。
-- 新增成功刷新列表并显示成功通知。
-- 新增失败不刷新数据并显示失败通知。
+- 查找新教授期间无进度页或进度条，但按钮显示 Spinner 和运行文字并保持禁用。
+- `job_id` 写入 `sessionStorage`，刷新后恢复轮询，完成或 404 后清除。
+- 全部成功、部分成功、无新增和全部单人失败分别显示正确通知；只要 `added_count > 0` 就刷新列表。
+- job 级失败显示停止原因；若此前已有成功提交，仍刷新列表并显示已添加数量。
 - pending 时禁用单人检查按钮。
 - 申请表单保存和删除。
 - 差异页 current/proposed、应用和拒绝流程。
@@ -744,9 +787,10 @@ q, tags, state, page, page_size, sort, order
 4. 单人内容发生变化时生成 proposal，未确认前数据库不变。
 5. 应用 proposal 后教授和论文更新，申请记录保持原值。
 6. 拒绝 proposal 后教授数据保持原值，可以再次检查。
-7. 外部服务失败时界面给出简洁错误，SQLite 不出现部分写入。
-8. 模拟 Tavily 或 OpenAlex 免费额度耗尽时，界面提示稍后重试且不会发起付费请求。
-9. 模拟 Research Agent 多次改写查询时，工具预算守卫在上限处停止，并且未验证 URL 或论文不会写入 SQLite。
+7. 模拟十位新教授中第十位处理失败时，前九位保持已提交，第十位没有教授或论文残留，结果返回 `added_count=9` 和 `failed_count=1`。
+8. 模拟单人失败后，批次继续处理下一位且不会重复调用已经成功提交的教授。
+9. 模拟 Tavily 或 OpenAlex 免费额度耗尽时，界面提示稍后重试、不会发起付费请求，并保留耗尽前已经提交的教授。
+10. 模拟 Research Agent 多次改写查询时，工具预算守卫在上限处停止，并且未验证 URL 或论文不会写入 SQLite。
 
 ## 13. 成功标准
 
@@ -754,7 +798,7 @@ q, tags, state, page, page_size, sort, order
 - 教授列表可搜索并按自由标签和申请状态筛选。
 - 教授详情包含要求的联系方式、链接、摘要、标签和近期论文。
 - 用户能维护四种状态、一个申请日期和一个文本笔记。
-- “查找新教授”永远不修改现有教授，并且只显示最终成功或失败通知。
+- “查找新教授”永远不修改现有教授；运行时有轻量视觉反馈，结束时只显示一个成功、部分成功、无新增或失败通知。
 - 现有教授只有经过单人检查和用户确认才会改变。
 - 抓取或 LLM 失败不会破坏现有教授或申请数据。
 - 应用不依赖 ORM；schema 可由原始 SQL migration 从空 SQLite 数据库完整重建。
@@ -767,6 +811,7 @@ q, tags, state, page, page_size, sort, order
 - [Illinois Block I Logo Guidelines](https://brand.illinois.edu/visual-identity/logo)
 - [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)
 - [Tavily API Credits](https://docs.tavily.com/documentation/api-credits)
+- [Tavily Rate Limits](https://docs.tavily.com/documentation/rate-limits)
 - [LangChain Models](https://docs.langchain.com/oss/python/langchain/models)
 - [LangChain Structured Output](https://reference.langchain.com/python/langchain-openai/chat_models/base/ChatOpenAI/with_structured_output)
 - [LangChain Tools and ToolNode](https://docs.langchain.com/oss/python/langchain/tools)
