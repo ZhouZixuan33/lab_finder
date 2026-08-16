@@ -54,3 +54,46 @@ export function getTags(options = {}) {
   return request("/api/tags", options);
 }
 
+export function getProfessor(professorId, options = {}) {
+  return request(`/api/professors/${professorId}`, options);
+}
+
+export function saveApplication(professorId, application, options = {}) {
+  return request(`/api/professors/${professorId}/application`, {
+    ...options,
+    method: "PUT",
+    body: JSON.stringify(application),
+  });
+}
+
+export function deleteApplication(professorId, options = {}) {
+  return request(`/api/professors/${professorId}/application`, {
+    ...options,
+    method: "DELETE",
+  });
+}
+
+export function startUpdateCheck(payload, options = {}) {
+  return request("/api/update-checks", {
+    ...options,
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getUpdateCheck(jobId, options = {}) {
+  return request(`/api/update-checks/${jobId}`, options);
+}
+
+export function getUpdateProposal(proposalId, options = {}) {
+  return request(`/api/update-proposals/${proposalId}`, options);
+}
+
+export function applyUpdateProposal(proposalId, options = {}) {
+  return request(`/api/update-proposals/${proposalId}/apply`, { ...options, method: "POST" });
+}
+
+export function rejectUpdateProposal(proposalId, options = {}) {
+  return request(`/api/update-proposals/${proposalId}/reject`, { ...options, method: "POST" });
+}
+
