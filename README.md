@@ -28,7 +28,7 @@ The SQLite schema contains exactly four tables:
 ## Prerequisites
 
 - Python 3.12 or newer.
-- Node.js 20 or newer and pnpm.
+- Node.js 20 or newer, including its bundled npm CLI.
 - Google Chrome for the Playwright end-to-end suite.
 - An API key for an OpenAI-compatible chat model.
 - Tavily and OpenAlex API keys.
@@ -44,7 +44,7 @@ From the repository root in PowerShell:
 ```powershell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".\backend[dev]"
-pnpm --dir frontend install
+npm --prefix frontend install
 Copy-Item .env.example .env
 ```
 
@@ -75,7 +75,7 @@ Start the API from the repository root:
 In a second terminal, start Vite:
 
 ```powershell
-pnpm --dir frontend dev
+npm --prefix frontend run dev
 ```
 
 Open `http://127.0.0.1:5173`. Vite proxies `/api` to `http://127.0.0.1:8000`.
@@ -102,7 +102,7 @@ instead of silently storing them.
 Build the frontend, then start the one-worker Python service:
 
 ```powershell
-pnpm --dir frontend build
+npm --prefix frontend run build
 .venv\Scripts\python.exe -m lab_tracker
 ```
 
@@ -115,9 +115,9 @@ The application intentionally runs with one worker because active jobs live only
 ```powershell
 .venv\Scripts\python.exe -m pytest backend/tests -p no:cacheprovider
 .venv\Scripts\ruff.exe check backend/lab_tracker backend/tests
-pnpm --dir frontend test -- --run
-pnpm --dir frontend build
-pnpm --dir frontend test:e2e
+npm --prefix frontend test -- --run
+npm --prefix frontend run build
+npm --prefix frontend run test:e2e
 ```
 
 All default tests use fakes or intercepted HTTP requests and do not spend LLM, Tavily, or OpenAlex quota.
