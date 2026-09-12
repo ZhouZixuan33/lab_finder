@@ -2,6 +2,8 @@
 
 日期：2026-09-11
 
+更新：2026-09-12，网页读取改用 Tavily Extract，补充模型可见工具定义及实现契约。
+
 本文记录讨论确定的教学项目方案，仅描述设计，不表示功能已经实现。
 
 ## 目标与范围
@@ -20,7 +22,7 @@
 
 讨论过限制模型从注册来源中选择、使用模型厂商 URL Context、以及由模型自主调用搜索和网页读取工具三种方式。
 
-本次采用第三种：复用 Tavily 与 HTTPX、BeautifulSoup，让模型自主决定调用顺序；个人主页查找不使用来源 ID 注册表，也不启用 URL Context。保留三个节点，重点展示 LangGraph 的共享状态、工具循环和条件路由。
+本次采用第三种：使用 Tavily Search 与 Tavily Extract，让模型自主决定调用顺序；个人主页查找不使用来源 ID 注册表，也不启用 URL Context。保留三个节点，重点展示 LangGraph 的共享状态、工具循环和条件路由。HTTPX 仅用于向 Extract API 发送请求，不再为此工具自行抓取和解析目标 HTML。
 
 ## Prompt
 
@@ -49,32 +51,119 @@ Publications、Prospective Students 等内容，这些是判断线索，
 
 ### search_web(query)
 
-底层复用 TavilyProvider。输入为模型生成的搜索词，返回标题、URL 和摘要。不要求模型从预设候选中选择，也不返回用于最终选择的 source ID。
-
-### read_webpage(url)
-
-使用现有 HTTP 客户端和 BeautifulSoup 解析能力。输入为模型选择的公共 HTTP/HTTPS URL，返回：
+模型可见定义（概念上的 function schema，实际由 LangChain 转换为供应商格式）：
 
 ```json
 {
-  "requested_url": "https://example.edu/faculty/person",
-  "url": "https://example.edu/faculty/person",
-  "title": "Professor Name",
-  "text": "页面正文……",
-  "links": [
+  "name": "search_web",
+  "description": "Search the public web for a professor's personal homepage. Returns page titles, URLs, and snippets. Use read_webpage to inspect a promising URL before selecting it; search snippets alone do not confirm a homepage.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "A focused search query using the professor's name, affiliation, and personal-homepage terms as needed.",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    },
+    "required": ["query"],
+    "additionalProperties": false
+  }
+}
+```
+
+实现：复用现有 TavilyProvider，清理搜索词空白，使用 basic 搜索、最多 5 条结果，不生成 Tavily answer，也不附带原始页面内容。由后端固定这些参数，模型只填写 query。返回统一 JSON：
+
+```json
+{
+  "results": [
     {
-      "text": "Personal Website",
-      "url": "https://person.github.io/"
+      "title": "Professor Name — Personal Website",
+      "url": "https://person.github.io/",
+      "snippet": "Professor at UIUC. Research, publications and teaching..."
     }
   ]
 }
 ```
 
-`url` 为重定向后的实际页面 URL。链接在清理 HTML 前提取，以免导航栏中的主页链接丢失；相对链接转换为绝对 URL，过滤非网页链接并去重。正文沿用现有长度限制，外链列表也应有合理上限，避免将整站链接塞入上下文。
+摘要沿用现有每条最多 1,200 字符的限制。空列表表示没有搜索结果，不是 API 错误。不要求模型从预设候选中选择，也不返回 source ID。
 
-沿用网络请求超时与限速，读取入口和重定向目标仅允许公共 HTTP/HTTPS 地址。此工具不执行网页 JavaScript；动态页面无法读取时作为工具失败处理，不新增浏览器自动化。
+### read_webpage(url)
 
-工具失败以包含错误信息的 ToolMessage 返回，允许模型在剩余预算内选择其他操作。成功结果和错误结果都通过 `tool_call_id` 对应原请求。
+模型可见定义：
+
+```json
+{
+  "name": "read_webpage",
+  "description": "Read one public webpage using Tavily Extract. Returns extracted Markdown, which may contain page links. Use it to inspect an official faculty profile or verify a candidate personal homepage. Extraction may omit some content or links; an extraction failure is not evidence that a homepage does not exist.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "One absolute public HTTP or HTTPS webpage URL to read, such as the supplied official profile or a URL found in search results or page content.",
+        "pattern": "^https?://"
+      }
+    },
+    "required": ["url"],
+    "additionalProperties": false
+  }
+}
+```
+
+只允许单个 URL，避免模型通过一个工具调用批量读取绕过 5 次预算。Python 解析并验证 URL；schema 中的 pattern 只是初步约束。
+
+实现：使用现有异步 HTTPX 客户端向 `https://api.tavily.com/extract` 发送 POST，复用 `TAVILY_API_KEY`，通过 `Authorization: Bearer ...` 请求头鉴权。无需增加 Tavily SDK 依赖，也不使用 BeautifulSoup。请求体由后端构造：
+
+```json
+{
+  "urls": ["https://person.github.io/"],
+  "extract_depth": "basic",
+  "format": "markdown",
+  "include_images": false,
+  "include_favicon": false,
+  "timeout": 10
+}
+```
+
+不传 query，避免只提取与查询相关的片段。Search 和 Extract 共享现有 Tavily 限速器。HTTP 请求设置 20 秒超时，保留 API 处理与传输余量；不在工具包装中增加自动重试或自动升级 advanced 的逻辑。
+
+读取响应的 `results[].url`、`results[].raw_content` 与 `failed_results`，映射为工具返回值：
+
+```json
+{
+  "requested_url": "https://example.edu/faculty/person",
+  "url": "https://example.edu/faculty/person",
+  "content": "# Professor Name\n\nProfessor at UIUC.\n\n[Personal Website](https://person.github.io/)",
+  "truncated": false
+}
+```
+
+`url` 原样采用 Tavily 返回的 URL，不将其声称为已独立验证的最终重定向地址。content 最多保留 12,000 字符，超出时设置 truncated=true。链接包含在 Markdown 中，不再返回单独的 links 列表，也不要求 Extract 提供 title 字段。
+
+Tavily 负责目标网页抓取和提取，本项目不保证任意页面可读、不保证全部外链保留，也不实现自己的浏览器或解析回退。输入只接受公共 HTTP/HTTPS URL，拒绝 localhost、显式私有或回环 IP 和带凭据的 URL。导航栏主页链接若被清洗遗漏，模型可在剩余预算内用 search_web 补查。
+
+### 工具绑定和错误返回
+
+用 Pydantic 参数模型设置字段 description 与 extra="forbid"，通过 `StructuredTool.from_function(coroutine=..., name=..., description=..., args_schema=...)` 包装两个异步函数，再传给 `chat_model.bind_tools(..., parallel_tool_calls=False)`。API Key、API 地址、提取深度、返回条数、超时与限速由后端配置，不作为模型参数。
+
+模型会收到工具 name、description 和参数 JSON Schema；它不会看到 Python 实现或 API Key。以上返回值示例是工具执行后的 ToolMessage 内容，不是 bind_tools 自动发送的返回值 schema。
+
+超时、HTTP 错误、failed_results 或空正文均返回结构化错误，例如：
+
+```json
+{
+  "error": {
+    "code": "PAGE_EXTRACTION_FAILED",
+    "message": "No readable content was returned for this URL."
+  }
+}
+```
+
+工具错误不包含 API Key、鉴权请求头或完整供应商响应。所有尝试（包括失败）消耗一次图内工具额度；成功结果和错误结果都通过 ToolMessage 的 tool_call_id 对应原请求。无成功正文的结果不能用于证明最终 URL 已读取。
+
+API 参数和响应字段依据：[Tavily Extract 官方文档](https://docs.tavily.com/documentation/api-reference/endpoint/extract)。Markdown 中保留个人主页链接的效果需用代表性 ECE 页面人工抽查，本次文档更新不调用付费接口。
 
 ## LangGraph 状态
 
@@ -158,5 +247,6 @@ Python 从成功的 read_webpage 结果中检查最终 URL 确实被读取过，
 5. 未读取的 URL、官方介绍页和无法确认的结果返回 `None`。
 6. 非预期多工具响应不会绕过次数控制。
 7. `lab_url` 在列表、详情和更新差异页展示为个人主页，数据字段名保持不变。
+8. Extract 请求固定为单 URL、basic 和 Markdown；正确处理 results、failed_results、空正文、超时和内容截断，错误不泄露凭据。
 
 本次只编写设计文档，不执行真实教授研究、不调用付费研究接口，也不修改业务代码或历史数据。
