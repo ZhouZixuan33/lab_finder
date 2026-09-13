@@ -1,6 +1,7 @@
 import json
 from collections import deque
 
+import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
@@ -244,21 +245,39 @@ async def test_researcher_maps_homepage_to_lab_url_and_preserves_research(
 
     class FakeResearchGraph:
         def __init__(self, **kwargs):
-            self.tools = kwargs["tools"]
+            assert web.urls == [PERSONAL]  # Homepage discovery already ran.
+            assert http.urls == [OFFICIAL, PERSONAL.rstrip("/")]
+            assert [page.url for page in kwargs["initial_pages"]] == [
+                OFFICIAL, PERSONAL.rstrip("/"),
+            ]
+            assert kwargs["attempted_source_ids"] == ["source_001", "source_002"]
+            assert "get_recent_publications" not in [tool.name for tool in kwargs["tools"]]
+            assert publications.calls == 0
 
         async def ainvoke(self):
-            tool = next(tool for tool in self.tools if tool.name == "get_recent_publications")
-            await tool.ainvoke({})
+            events.append("summary_validated")
             return research
 
     class FakePublications:
         calls = 0
 
         async def get_recent_publications(self, identity):
+            assert events == ["summary_validated"]
+            events.append("publications")
             self.calls += 1
             if author_missing:
                 raise OpenAlexAuthorNotFoundError("No matching author")
             return []
+
+    class FakeHttp:
+        def __init__(self):
+            self.urls = []
+
+        async def get(self, url):
+            self.urls.append(url)
+            return httpx.Response(200, request=httpx.Request("GET", url), text=(
+                "<main>Alice Systems at UIUC researches secure computing systems.</main>"
+            ))
 
     monkeypatch.setattr(update_checks, "ProfessorResearchGraph", FakeResearchGraph)
     web = FakeWeb()
@@ -270,11 +289,13 @@ async def test_researcher_maps_homepage_to_lab_url_and_preserves_research(
         {"personal_homepage_url": PERSONAL},
     )
     publications = FakePublications()
+    events = []
+    http = FakeHttp()
     researcher = update_checks.LangGraphCandidateResearcher(
         chat_model=model,
         tavily=web,
         openalex=publications,
-        page_http=None,
+        page_http=http,
         homepage_reader=web,
     )
     candidate = FacultyCandidate(
@@ -294,8 +315,8 @@ async def test_researcher_maps_homepage_to_lab_url_and_preserves_research(
     assert result.source_urls == research.source_urls
     assert research.lab_url is None  # Do not mutate the old graph's result.
     assert result.publications_unavailable is author_missing
-    if author_missing:
-        assert publications.calls == 1
+    assert publications.calls == 1
+    assert events == ["summary_validated", "publications"]
 
 
 @pytest.mark.asyncio

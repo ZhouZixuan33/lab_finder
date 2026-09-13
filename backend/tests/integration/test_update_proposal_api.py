@@ -3,6 +3,7 @@ import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from lab_tracker.config import Settings
@@ -239,6 +240,50 @@ def test_missing_author_preserves_publications_when_homepage_proposal_is_applied
     assert [p["title"] for p in after["publications"]] == [
         p["title"] for p in before["publications"]
     ]
+
+
+@pytest.mark.parametrize("failure_stage", ["publication_insert", "mark_applied"])
+def test_apply_late_failure_restores_professor_papers_and_pending_status(
+    tmp_path: Path, monkeypatch, failure_stage: str,
+) -> None:
+    client, _, professor_id = build_client(tmp_path / "late-rollback.db", changed_research())
+    checkpoints = []
+    with client:
+        started = client.post(
+            "/api/update-checks", json={"scope": "professor", "professor_id": professor_id},
+        )
+        proposal_id = wait_for_job(client, started.json()["job_id"])["proposal_id"]
+        before = client.get(f"/api/professors/{professor_id}").json()
+
+        def fail(repository, *args, **kwargs):
+            # The professor update has already happened, and the old papers have
+            # already been deleted. Rollback must undo those successful writes.
+            current = ProfessorsRepository(repository.connection).get(professor_id)
+            papers = PublicationsRepository(repository.connection).list_for_professor(professor_id)
+            checkpoints.append((
+                repository.connection.in_transaction,
+                current.research_summary,
+                [paper.title for paper in papers],
+            ))
+            raise RuntimeError("Injected late transaction failure")
+
+        if failure_stage == "publication_insert":
+            monkeypatch.setattr(PublicationsRepository, "create_many", fail)
+        else:
+            monkeypatch.setattr(ProposalsRepository, "mark_applied", fail)
+        response = client.post(f"/api/update-proposals/{proposal_id}/apply")
+        after = client.get(f"/api/professors/{professor_id}").json()
+        proposal = client.get(f"/api/update-proposals/{proposal_id}").json()
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "PROPOSAL_APPLY_FAILED"
+    assert len(checkpoints) == 1
+    in_transaction, summary, titles = checkpoints[0]
+    assert in_transaction
+    assert summary.startswith("Alice studies dependable")
+    assert titles == ([] if failure_stage == "publication_insert" else ["Dependable AI Hardware"])
+    assert after == before
+    assert proposal["status"] == "pending"
 
 
 def test_no_difference_returns_changed_false_and_reject_is_one_way(tmp_path: Path) -> None:

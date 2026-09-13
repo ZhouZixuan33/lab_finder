@@ -28,7 +28,6 @@ def test_finalizer_prompt_contains_the_complete_taxonomy_and_selection_rules() -
     messages = build_finalizer_messages(
         identity(),
         pages=[],
-        publications=[],
         previous_errors=[],
     )
     prompt = str(messages[0].content)

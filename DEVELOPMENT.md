@@ -89,17 +89,22 @@ The backend deliberately runs with one worker because active update jobs exist o
 
 Faculty discovery first parses the official UIUC ECE directory with deterministic code to obtain each professor's name, title, email, and official profile URL. Existing professors are identified before external research begins.
 
-For each new professor, a bounded LangGraph `StateGraph` gives the model the verified name and email and exposes three protected tools:
+New-professor research and single-professor refreshes use the same enforced sequence: personal homepage discovery, website-based summary and category validation, then OpenAlex publication retrieval. Network and model calls run outside database write transactions.
+
+The research `StateGraph` receives the fixed identity and extracted website evidence and exposes two protected tools:
 
 - `search_professor_web`: search with Tavily for official profiles and research evidence.
 - `extract_candidate_page`: fetch and extract text only from a server-registered candidate URL.
-- `get_recent_publications`: query OpenAlex using the professor's validated identity.
 
-The graph disables parallel tool calls and enforces budgets of at most three searches, five unique page extractions, one OpenAlex request, and eight agent turns. A separate structured-output model call creates the final professor record. Deterministic validation checks identities, evidence, URLs, publications, and tags before storage.
+Before the research graph runs, the backend attempts to extract the official UIUC page and the confirmed personal homepage. These attempts, including failures, count toward the five-page budget and cannot be repeated by the research agent. Available page content goes to both the agent and finalizer. A missing homepage or failed page fetch can fall back to the remaining evidence; insufficient identity-matched evidence fails validation.
+
+The graph disables parallel tool calls and enforces budgets of at most three searches, five unique page extraction attempts, and eight agent turns. A separate structured-output model call generates the summary and categories. Deterministic validation checks evidence, URLs, and tags, with at most three finalizer attempts. The model has no publication tool, publication data, or publication-selection field.
+
+Only after successful research validation does the backend call OpenAlex using the fixed professor identity. It attaches all normalized provider results (up to 25 recent works) without LLM selection and without changing the summary or tags. Author matching and the publication window are unchanged. OpenAlex's provider-level memory cache remains in place, so a refresh does not guarantee a new network request.
 
 Generated tags are limited to one through three values from a controlled set of 12 broad ECE research categories. Narrow or invented tags fail validation rather than being stored.
 
-After research, a separate `HomepageGraph` finds the professor's personal website. Its three nodes are `agent`, `tools`, and `finalize`. The prompt asks the model to read the official profile first, then search if needed. The model receives `search_web(query)` (Tavily Search) and `read_webpage(url)` (Tavily Extract, basic Markdown). Both providers share `TAVILY_API_KEY` and the Tavily rate limiter. There are at most five tool attempts, including failures, followed by one structured finalization without external tools. The fifth tool result goes directly to finalization. This means at most six model calls for this separate homepage stage.
+Before website-based summarization, a separate `HomepageGraph` finds the professor's personal website. Its three nodes are `agent`, `tools`, and `finalize`. The prompt asks the model to read the official profile first, then search if needed. The model receives `search_web(query)` (Tavily Search) and `read_webpage(url)` (Tavily Extract, basic Markdown). Both providers share `TAVILY_API_KEY` and the Tavily rate limiter. There are at most five tool attempts, including failures, followed by one structured finalization without external tools. The fifth tool result goes directly to finalization. This means at most six model calls for this separate homepage stage.
 
 The selected URL must appear in a successful page-read result and must not be the supplied official profile or its returned alias. Identity and page type are judged by the model. A confirmed URL is stored in the existing `lab_url` field and displayed as **Personal website**; `homepage_url` keeps its existing behavior. Unconfirmed results are null. Existing lab links are not automatically replaced: use a single-professor check and review its proposal. Tests use fake providers; real website extraction and model quality remain provider-dependent.
 
@@ -107,7 +112,7 @@ New-professor research runs serially. Provider-specific rate limiters enforce co
 
 A single-professor check researches fresh data and creates an `update_proposals` row only when a real difference exists. The professor record changes only after the user applies the entire pending proposal. A proposal that fails to apply remains `pending`; a user may instead reject it permanently. A professor with a pending proposal cannot start another check.
 
-An OpenAlex author-not-found result no longer aborts research. It emits `openalex.author_not_found`, skips further author lookups within that research run, and allows homepage discovery to continue. An internal `publications_unavailable` flag makes the update proposal retain existing publications rather than proposing their deletion. A successful empty publication result still uses normal comparison; other provider errors retain their existing handling.
+An OpenAlex author-not-found result does not abort research. It emits `openalex.author_not_found` and returns the already completed website summary with an internal `publications_unavailable` flag. That flag makes the update proposal retain existing publications rather than proposing their deletion. A successful empty publication result still uses normal comparison. Other unrecovered provider errors fail the research run before persistence; the already generated summary and tags are not partially saved.
 
 Only one update job can be active at a time. Job IDs are UUID strings stored in memory, while proposal IDs are SQLite integer primary keys. The UI polls job state and shows compact running and completion feedback.
 

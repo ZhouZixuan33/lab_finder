@@ -55,14 +55,13 @@ class OpenAlexPublication(DomainModel):
 class ProfessorResearchResult(DomainModel):
     """Structured output requested from the finalizer model.
 
-    URLs and publications are selected only by opaque IDs. They are resolved by
+    URLs are selected only by opaque IDs. They are resolved by
     deterministic validation after the model returns this object.
     """
 
     research_summary: str = Field(min_length=40, max_length=2_000)
     tags: list[str] = Field(min_length=1, max_length=3)
     homepage_source_id: str | None = None
-    publication_source_ids: list[str] = Field(default_factory=list, max_length=25)
     evidence_source_ids: list[str] = Field(min_length=1, max_length=5)
     confidence: float | None = Field(default=None, ge=0, le=1)
 

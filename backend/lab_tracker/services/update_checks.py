@@ -121,19 +121,17 @@ class LangGraphCandidateResearcher:
         self.homepage_reader = homepage_reader
 
     async def research(self, candidate: FacultyCandidate) -> ValidatedProfessorResearch:
-        return await self._research(candidate, required_refresh=False)
+        return await self._research(candidate)
 
     async def research_with_refresh(
         self,
         candidate: FacultyCandidate,
     ) -> ValidatedProfessorResearch:
-        return await self._research(candidate, required_refresh=True)
+        return await self._research(candidate)
 
     async def _research(
         self,
         candidate: FacultyCandidate,
-        *,
-        required_refresh: bool,
     ) -> ValidatedProfessorResearch:
         identity = ResearchIdentity(
             name=candidate.name,
@@ -142,46 +140,62 @@ class LangGraphCandidateResearcher:
             affiliation=candidate.affiliation,
             official_profile_url=candidate.directory_profile_url,
         )
+        personal_url = await HomepageGraph(
+            identity=identity,
+            chat_model=self.chat_model,
+            tools=create_homepage_tools(search=self.tavily, reader=self.homepage_reader),
+        ).ainvoke()
         registry = CandidateSourceRegistry()
-        registry.register_hit(
+        official_source = registry.register_hit(
             SearchHit(
                 title=f"Official UIUC profile for {candidate.name}",
                 url=candidate.directory_profile_url,
                 snippet="Official UIUC ECE faculty profile.",
             )
         )
-        preloaded_sources = []
-        initial_publications = []
-        publication_lookup = _PublicationLookup(self.openalex)
-        if required_refresh:
-            refresh_hits = await self.tavily.search(
-                f"{candidate.name} UIUC ECE research lab publications"
-            )
-            preloaded_sources = registry.register_hits(refresh_hits)
-            initial_publications = await publication_lookup.get_recent_publications(identity)
+        preloaded_sources = [official_source]
+        if personal_url:
+            personal_source = registry.register_hit(SearchHit(
+                title=f"Verified personal homepage for {candidate.name}",
+                url=personal_url,
+                snippet="Personal homepage verified during homepage discovery.",
+            ))
+            if personal_source.source_id != official_source.source_id:
+                preloaded_sources.append(personal_source)
         page_extractor = PageExtractor(self.page_http, registry)
+        initial_pages = []
+        attempted_source_ids = []
+        for source in preloaded_sources:
+            attempted_source_ids.append(source.source_id)
+            try:
+                page = await page_extractor.extract(source.source_id, identity)
+            except httpx.HTTPError as error:
+                emit_research_event(
+                    "research_page.failed", professor=identity.name,
+                    source_id=source.source_id, error_type=type(error).__name__,
+                )
+                continue
+            initial_pages.append(page)
         tools = create_research_tools(
             identity=identity,
             registry=registry,
             tavily=self.tavily,
             page_extractor=page_extractor,
-            openalex=publication_lookup,
         )
         research = await ProfessorResearchGraph(
             identity=identity,
             chat_model=self.chat_model,
             tools=tools,
             registry=registry,
-            initial_publications=initial_publications,
+            initial_pages=initial_pages,
+            attempted_source_ids=attempted_source_ids,
             preloaded_sources=preloaded_sources,
         ).ainvoke()
-        personal_url = await HomepageGraph(
-            identity=identity,
-            chat_model=self.chat_model,
-            tools=create_homepage_tools(search=self.tavily, reader=self.homepage_reader),
-        ).ainvoke()
+        publication_lookup = _PublicationLookup(self.openalex)
+        publications = await publication_lookup.get_recent_publications(identity)
         return research.model_copy(update={
             "lab_url": personal_url,
+            "publications": publications,
             "publications_unavailable": publication_lookup.unavailable,
         })
 

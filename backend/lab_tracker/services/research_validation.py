@@ -2,7 +2,6 @@
 
 from lab_tracker.models.research import (
     ExtractedPage,
-    OpenAlexPublication,
     ProfessorResearchResult,
     ValidatedProfessorResearch,
 )
@@ -23,11 +22,9 @@ def validate_research_result(
     result: ProfessorResearchResult,
     *,
     pages: list[ExtractedPage],
-    publications: list[OpenAlexPublication],
     registry: CandidateSourceRegistry,
 ) -> ValidatedProfessorResearch:
     page_by_id = {page.source_id: page for page in pages}
-    publication_by_id = {publication.source_id: publication for publication in publications}
 
     evidence_ids = list(dict.fromkeys(result.evidence_source_ids))
     evidence_pages: list[ExtractedPage] = []
@@ -61,13 +58,6 @@ def validate_research_result(
         except UnknownSourceError as error:
             raise ResearchValidationError(f"{label} source ID is unknown: {source_id}") from error
 
-    selected_publications: list[OpenAlexPublication] = []
-    for source_id in dict.fromkeys(result.publication_source_ids):
-        publication = publication_by_id.get(source_id)
-        if publication is None:
-            raise ResearchValidationError(f"publication source ID is unknown: {source_id}")
-        selected_publications.append(publication)
-
     tags: list[str] = []
     seen_tags: set[str] = set()
     for tag in result.tags:
@@ -90,7 +80,6 @@ def validate_research_result(
         research_summary=" ".join(result.research_summary.split()),
         tags=tags,
         homepage_url=resolve_link(result.homepage_source_id, "homepage"),
-        publications=selected_publications,
         source_urls=[registry.get(source_id).url for source_id in evidence_ids],
         confidence=result.confidence,
     )

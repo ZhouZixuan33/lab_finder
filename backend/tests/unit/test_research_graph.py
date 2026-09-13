@@ -1,3 +1,4 @@
+import json
 import logging
 from collections import deque
 from collections.abc import Sequence
@@ -10,7 +11,6 @@ from lab_tracker.diagnostics import LOGGER_NAME
 from lab_tracker.models.research import (
     ExtractedPage,
     IdentitySignals,
-    OpenAlexPublication,
     ProfessorResearchResult,
     ResearchIdentity,
     SearchHit,
@@ -103,26 +103,6 @@ class FakePageExtractor:
         )
 
 
-class FakeOpenAlex:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def get_recent_publications(
-        self,
-        _identity: ResearchIdentity,
-    ) -> list[OpenAlexPublication]:
-        self.calls += 1
-        return [
-            OpenAlexPublication(
-                source_id="openalex:W1",
-                openalex_id="W1",
-                title="Reliable Accelerators",
-                year=2026,
-                publication_url="https://openalex.org/W1",
-            )
-        ]
-
-
 def identity() -> ResearchIdentity:
     return ResearchIdentity(
         name="Alice Systems",
@@ -147,7 +127,6 @@ def final_result(
             "Computer Architecture & Systems",
         ],
         "homepage_source_id": homepage_source_id,
-        "publication_source_ids": ["openalex:W1"],
         "evidence_source_ids": [evidence_source_id],
         "confidence": 0.9,
     }
@@ -155,18 +134,16 @@ def final_result(
 
 def build_graph(
     model: FakeChatModel,
-) -> tuple[ProfessorResearchGraph, FakeSearchProvider, FakePageExtractor, FakeOpenAlex]:
+) -> tuple[ProfessorResearchGraph, FakeSearchProvider, FakePageExtractor]:
     professor_identity = identity()
     registry = CandidateSourceRegistry()
     search = FakeSearchProvider()
     pages = FakePageExtractor(registry)
-    openalex = FakeOpenAlex()
     tools = create_research_tools(
         identity=professor_identity,
         registry=registry,
         tavily=search,
         page_extractor=pages,
-        openalex=openalex,
     )
     graph = ProfessorResearchGraph(
         identity=professor_identity,
@@ -174,7 +151,7 @@ def build_graph(
         tools=tools,
         registry=registry,
     )
-    return graph, search, pages, openalex
+    return graph, search, pages
 
 
 @pytest.mark.asyncio
@@ -188,21 +165,20 @@ async def test_graph_runs_explicit_tool_sequence_and_structured_finalizer() -> N
         ],
         finalizer_outputs=[final_result()],
     )
-    graph, search, pages, openalex = build_graph(model)
+    graph, search, pages = build_graph(model)
 
     result = await graph.ainvoke()
 
     assert search.queries == ["Alice Systems UIUC lab"]
     assert pages.source_ids == ["source_002"]
-    assert openalex.calls == 1
     assert result.homepage_url == "https://alice.example.edu/lab-1"
-    assert [publication.openalex_id for publication in result.publications] == ["W1"]
+    assert result.publications == []
+    assert any("UNKNOWN_TOOL" in str(m.content) for ms in model.agent_inputs for m in ms)
     assert model.parallel_tool_calls is False
     assert model.structured_schema is ProfessorResearchResult
     assert set(model.bound_tool_names) == {
         "search_professor_web",
         "extract_candidate_page",
-        "get_recent_publications",
     }
 
 
@@ -220,7 +196,7 @@ async def test_graph_allows_search_rewrite_but_enforces_three_search_budget() ->
         ],
         finalizer_outputs=[final_result()],
     )
-    graph, search, pages, _openalex = build_graph(model)
+    graph, search, pages = build_graph(model)
 
     result = await graph.ainvoke()
 
@@ -279,15 +255,14 @@ async def test_graph_rejects_arbitrary_url_and_parallel_tool_calls_before_toolno
                 evidence_source_id="source_001",
                 homepage_source_id="source_001",
             )
-            | {"publication_source_ids": []}
+
         ],
     )
-    graph, search, pages, openalex = build_graph(model)
+    graph, search, pages = build_graph(model)
 
     result = await graph.ainvoke()
 
     assert search.queries == []
-    assert openalex.calls == 0
     assert pages.source_ids == ["source_001"]
     assert result.homepage_url == identity().official_profile_url
 
@@ -302,12 +277,12 @@ async def test_finalizer_retries_twice_then_accepts_valid_structure() -> None:
         ],
         finalizer_outputs=[
             final_result()
-            | {"tags": ["Congestion Control"], "publication_source_ids": []},
+            | {"tags": ["Congestion Control"]},
             final_result(evidence_source_id="source_999"),
-            final_result() | {"publication_source_ids": []},
+            final_result(),
         ],
     )
-    graph, _search, _pages, _openalex = build_graph(model)
+    graph, _search, _pages = build_graph(model)
 
     result = await graph.ainvoke()
 
@@ -328,7 +303,7 @@ async def test_finalizer_fails_after_three_invalid_attempts() -> None:
         agent_outputs=[AIMessage(content="Finalize without evidence.")],
         finalizer_outputs=[final_result(), final_result(), final_result()],
     )
-    graph, _search, _pages, _openalex = build_graph(model)
+    graph, _search, _pages = build_graph(model)
 
     with pytest.raises(ResearchGraphError, match="evidence"):
         await graph.ainvoke()
@@ -348,10 +323,10 @@ async def test_graph_logs_real_agent_and_finalizer_invocation_boundaries(caplog)
                 evidence_source_id="source_001",
                 homepage_source_id="source_001",
             )
-            | {"publication_source_ids": []}
+
         ],
     )
-    graph, _search, _pages, _openalex = build_graph(model)
+    graph, _search, _pages = build_graph(model)
 
     with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
         await graph.ainvoke()
@@ -371,7 +346,7 @@ async def test_graph_logs_model_failure_without_exception_message(caplog) -> Non
         agent_outputs=cast(Sequence[AIMessage], [RuntimeError(secret)]),
         finalizer_outputs=[],
     )
-    graph, _search, _pages, _openalex = build_graph(model)
+    graph, _search, _pages = build_graph(model)
 
     with (
         caplog.at_level(logging.INFO, logger=LOGGER_NAME),
@@ -384,3 +359,51 @@ async def test_graph_logs_model_failure_without_exception_message(caplog) -> Non
     assert "llm_call.failed" in output
     assert '"error_type":"RuntimeError"' in output
     assert secret not in output
+
+
+@pytest.mark.asyncio
+async def test_preloaded_pages_reach_models_and_count_toward_page_budget() -> None:
+    registry = CandidateSourceRegistry()
+    sources = [registry.register_hit(SearchHit(
+        title=f"Research {i}", url=f"https://alice.example.edu/research-{i}",
+    )) for i in range(6)]
+    pages = FakePageExtractor(registry)
+    initial = [await pages.extract(source.source_id, identity()) for source in sources[:2]]
+    pages.source_ids.clear()
+    model = FakeChatModel(
+        agent_outputs=[
+            tool_call("extract_candidate_page", {"source_id": "source_001"}, "repeat"),
+            tool_call("extract_candidate_page", {"source_id": "source_003"}, "failed-repeat"),
+            tool_call("extract_candidate_page", {"source_id": "source_004"}, "four"),
+            tool_call("extract_candidate_page", {"source_id": "source_005"}, "five"),
+            tool_call("extract_candidate_page", {"source_id": "source_006"}, "six"),
+            AIMessage(content="Finalize"),
+        ],
+        finalizer_outputs=[final_result(evidence_source_id="source_001",
+                                        homepage_source_id="source_001")],
+    )
+    graph = ProfessorResearchGraph(
+        identity=identity(), chat_model=model, registry=registry,
+        tools=create_research_tools(identity=identity(), registry=registry,
+                                    tavily=FakeSearchProvider(), page_extractor=pages),
+        initial_pages=initial, preloaded_sources=sources,
+        attempted_source_ids=[source.source_id for source in sources[:3]],
+    )
+    result = await graph.ainvoke()
+    assert result.publications == []
+    assert pages.source_ids == ["source_004", "source_005"]
+    payload = json.loads(str(model.finalizer_inputs[0][1].content))
+    assert set(payload) == {"identity", "verified_pages"}
+    assert [p["source_id"] for p in payload["verified_pages"]] == [
+        "source_001", "source_002", "source_004", "source_005",
+    ]
+    first_input = str(model.agent_inputs[0][1].content)
+    assert initial[0].text in first_input
+    assert "source_002" in first_input
+    messages = [m for invocation in model.agent_inputs for m in invocation]
+    assert any("SOURCE_ALREADY_REQUESTED" in str(m.content) for m in messages)
+    assert any("TOOL_BUDGET_EXCEEDED" in str(m.content) for m in messages)
+
+
+def test_finalizer_schema_cannot_select_publications() -> None:
+    assert "publication_source_ids" not in ProfessorResearchResult.model_json_schema()["properties"]

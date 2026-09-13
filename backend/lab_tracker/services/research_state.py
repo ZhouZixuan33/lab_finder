@@ -7,7 +7,6 @@ from langgraph.graph.message import add_messages
 
 from lab_tracker.models.research import (
     ExtractedPage,
-    OpenAlexPublication,
     ResearchIdentity,
     ValidatedProfessorResearch,
 )
@@ -19,9 +18,7 @@ class ResearchState(TypedDict, total=False):
     turn_count: int
     search_calls: int
     page_source_ids_attempted: list[str]
-    openalex_calls: int
     pages: list[ExtractedPage]
-    publications: list[OpenAlexPublication]
     recorded_tool_call_ids: list[str]
     guard_allowed: bool
     force_finalize: bool

@@ -107,7 +107,6 @@ async def test_prompt_injection_text_never_reaches_the_finalizer_prompt() -> Non
     messages = build_finalizer_messages(
         identity,
         pages=[page],
-        publications=[],
         previous_errors=[],
     )
     prompt = " ".join(str(message.content) for message in messages)

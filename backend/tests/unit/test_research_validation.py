@@ -4,7 +4,6 @@ from pydantic import ValidationError
 from lab_tracker.models.research import (
     ExtractedPage,
     IdentitySignals,
-    OpenAlexPublication,
     ProfessorResearchResult,
     SearchHit,
 )
@@ -18,7 +17,6 @@ from lab_tracker.services.research_validation import (
 def evidence() -> tuple[
     CandidateSourceRegistry,
     ExtractedPage,
-    OpenAlexPublication,
 ]:
     registry = CandidateSourceRegistry()
     source = registry.register_hit(
@@ -36,18 +34,11 @@ def evidence() -> tuple[
         text="Alice Systems at UIUC researches reliable computing and secure accelerators.",
         identity_signals=IdentitySignals(name_match=True, affiliation_match=True),
     )
-    publication = OpenAlexPublication(
-        source_id="openalex:W1",
-        openalex_id="W1",
-        title="Reliable Accelerators",
-        year=2026,
-        publication_url="https://openalex.org/W1",
-    )
-    return registry, page, publication
+    return registry, page
 
 
-def test_validation_resolves_only_verified_source_and_publication_ids() -> None:
-    registry, page, publication = evidence()
+def test_validation_resolves_only_verified_webpage_ids() -> None:
+    registry, page = evidence()
     result = ProfessorResearchResult(
         research_summary=(
             "Alice Systems researches reliable computer architecture and secure accelerators."
@@ -58,7 +49,6 @@ def test_validation_resolves_only_verified_source_and_publication_ids() -> None:
             "Security & Privacy",
         ],
         homepage_source_id=page.source_id,
-        publication_source_ids=[publication.source_id],
         evidence_source_ids=[page.source_id],
         confidence=0.9,
     )
@@ -66,14 +56,13 @@ def test_validation_resolves_only_verified_source_and_publication_ids() -> None:
     validated = validate_research_result(
         result,
         pages=[page],
-        publications=[publication],
         registry=registry,
     )
 
     assert validated.homepage_url == "https://alice.example.edu/lab"
-    assert validated.lab_url is None  # The independent homepage graph fills this later.
+    assert validated.lab_url is None  # The orchestrator attaches the discovered homepage.
     assert validated.tags == ["Security & Privacy", "Computer Architecture & Systems"]
-    assert [item.openalex_id for item in validated.publications] == ["W1"]
+    assert validated.publications == []
     assert validated.source_urls == ["https://alice.example.edu/lab"]
 
 
@@ -82,11 +71,10 @@ def test_validation_resolves_only_verified_source_and_publication_ids() -> None:
     [
         ("evidence_source_ids", ["source_999"]),
         ("homepage_source_id", "source_999"),
-        ("publication_source_ids", ["openalex:W999"]),
     ],
 )
 def test_validation_rejects_unknown_model_generated_ids(field: str, value: object) -> None:
-    registry, page, publication = evidence()
+    registry, page = evidence()
     result = ProfessorResearchResult(
         research_summary="A sufficiently detailed summary grounded in validated research evidence.",
         tags=["Computer Architecture & Systems"],
@@ -97,13 +85,12 @@ def test_validation_rejects_unknown_model_generated_ids(field: str, value: objec
         validate_research_result(
             result,
             pages=[page],
-            publications=[publication],
             registry=registry,
         )
 
 
 def test_validation_rejects_summary_without_identity_matched_page_evidence() -> None:
-    registry, page, _publication = evidence()
+    registry, page = evidence()
     unverified_page = page.model_copy(update={"identity_signals": IdentitySignals()})
     result = ProfessorResearchResult(
         research_summary="A sufficiently detailed summary that lacks verified identity evidence.",
@@ -115,7 +102,6 @@ def test_validation_rejects_summary_without_identity_matched_page_evidence() -> 
         validate_research_result(
             result,
             pages=[unverified_page],
-            publications=[],
             registry=registry,
         )
 
@@ -164,7 +150,7 @@ def test_research_result_requires_one_to_three_tags(count: int) -> None:
 def test_validation_rejects_tags_outside_the_controlled_taxonomy(
     invalid_tag: str,
 ) -> None:
-    registry, page, _publication = evidence()
+    registry, page = evidence()
     result = ProfessorResearchResult(
         research_summary="A sufficiently detailed evidence-grounded research summary.",
         tags=[invalid_tag],
@@ -175,6 +161,5 @@ def test_validation_rejects_tags_outside_the_controlled_taxonomy(
         validate_research_result(
             result,
             pages=[page],
-            publications=[],
             registry=registry,
         )

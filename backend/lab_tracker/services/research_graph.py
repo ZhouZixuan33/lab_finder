@@ -14,7 +14,6 @@ from pydantic import ValidationError
 from lab_tracker.diagnostics import emit_research_event
 from lab_tracker.models.research import (
     ExtractedPage,
-    OpenAlexPublication,
     ProfessorResearchResult,
     RegisteredSource,
     ResearchIdentity,
@@ -38,13 +37,11 @@ from lab_tracker.services.research_validation import (
 MAX_AGENT_TURNS = 8
 MAX_SEARCH_CALLS = 3
 MAX_PAGE_CALLS = 5
-MAX_OPENALEX_CALLS = 1
 GRAPH_RECURSION_LIMIT = 24
 
 TOOL_ARGUMENTS = {
     "search_professor_web": frozenset({"query"}),
     "extract_candidate_page": frozenset({"source_id"}),
-    "get_recent_publications": frozenset(),
 }
 
 
@@ -70,13 +67,23 @@ class ProfessorResearchGraph:
         chat_model: ResearchChatModel,
         tools: Sequence[BaseTool],
         registry: CandidateSourceRegistry,
-        initial_publications: Sequence[OpenAlexPublication] = (),
+        initial_pages: Sequence[ExtractedPage] = (),
+        attempted_source_ids: Sequence[str] = (),
         preloaded_sources: Sequence[RegisteredSource] = (),
     ) -> None:
         self.identity = identity
         self.registry = registry
         self.tools = list(tools)
-        self.initial_publications = list(initial_publications)
+        self.initial_pages = list(initial_pages)
+        self.attempted_source_ids = list(dict.fromkeys([
+            *attempted_source_ids, *(page.source_id for page in initial_pages),
+        ]))
+        if len(self.attempted_source_ids) > MAX_PAGE_CALLS:
+            raise ValueError("Preloaded page attempts exceed the research page budget")
+        for page in self.initial_pages:
+            source = registry.get(page.source_id)
+            if page.url != source.url or page.candidate_id != source.candidate_id:
+                raise ValueError("Preloaded page does not match its registered source")
         self.preloaded_sources = list(preloaded_sources)
         self.official_source = registry.register_hit(
             SearchHit(
@@ -128,13 +135,13 @@ class ProfessorResearchGraph:
                 self.identity,
                 official_source_id=self.official_source.source_id,
                 preloaded_sources=self.preloaded_sources,
+                initial_pages=self.initial_pages,
+                attempted_source_ids=self.attempted_source_ids,
             ),
             "turn_count": 0,
             "search_calls": 0,
-            "page_source_ids_attempted": [],
-            "openalex_calls": 0,
-            "pages": [],
-            "publications": list(self.initial_publications),
+            "page_source_ids_attempted": list(self.attempted_source_ids),
+            "pages": list(self.initial_pages),
             "recorded_tool_call_ids": [],
             "guard_allowed": False,
             "force_finalize": False,
@@ -223,14 +230,6 @@ class ProfessorResearchGraph:
                 }
                 pages_by_id[page.source_id] = page
                 updates["pages"] = list(pages_by_id.values())
-        elif message.name == "get_recent_publications" and isinstance(payload, list):
-            publications: list[OpenAlexPublication] = []
-            for item in payload:
-                try:
-                    publications.append(OpenAlexPublication.model_validate(item))
-                except ValidationError:
-                    continue
-            updates["publications"] = publications
         return updates
 
     @staticmethod
@@ -308,15 +307,6 @@ class ProfessorResearchGraph:
                     message="Unique page extraction budget is exhausted.",
                 )
             updates["page_source_ids_attempted"] = [*attempted, source_id]
-        else:
-            count = state.get("openalex_calls", 0)
-            if count >= MAX_OPENALEX_CALLS:
-                return self._guard_error(
-                    calls,
-                    code="TOOL_BUDGET_EXCEEDED",
-                    message="OpenAlex budget is exhausted.",
-                )
-            updates["openalex_calls"] = count + 1
         return updates
 
     @staticmethod
@@ -348,12 +338,10 @@ class ProfessorResearchGraph:
     async def _finalizer_node(self, state: ResearchState) -> ResearchState:
         errors = list(state.get("finalizer_errors", []))
         pages = state.get("pages", [])
-        publications = state.get("publications", [])
         for attempt_index in range(3):
             messages = build_finalizer_messages(
                 self.identity,
                 pages=pages,
-                publications=publications,
                 previous_errors=errors,
             )
             try:
@@ -388,7 +376,6 @@ class ProfessorResearchGraph:
                 validated = validate_research_result(
                     result,
                     pages=pages,
-                    publications=publications,
                     registry=self.registry,
                 )
             except (ValidationError, ResearchValidationError, ValueError) as error:
