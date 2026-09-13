@@ -40,7 +40,7 @@ test("shows the professor catalog and uses a dash for no application", async () 
   mockCatalog();
   render(<MemoryRouter><ProfessorListPage /></MemoryRouter>);
   expect(await screen.findByRole("link", { name: "Alice Systems" })).toHaveAttribute("href", "/professors/7");
-  expect(screen.getByRole("link", { name: /Visit lab/ })).toHaveAttribute("rel", "noreferrer");
+  expect(screen.getByRole("link", { name: /Personal website/ })).toHaveAttribute("rel", "noreferrer");
   expect(screen.getByRole("cell", { name: "—" })).toBeInTheDocument();
 });
 
@@ -72,4 +72,3 @@ test("shows empty and API error states", async () => {
   render(<MemoryRouter><ProfessorListPage /></MemoryRouter>);
   expect(await screen.findByRole("alert")).toHaveTextContent("Database unavailable");
 });
-

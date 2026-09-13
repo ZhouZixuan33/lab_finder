@@ -147,7 +147,6 @@ def final_result(
             "Computer Architecture & Systems",
         ],
         "homepage_source_id": homepage_source_id,
-        "lab_source_id": evidence_source_id,
         "publication_source_ids": ["openalex:W1"],
         "evidence_source_ids": [evidence_source_id],
         "confidence": 0.9,

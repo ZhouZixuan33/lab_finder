@@ -34,7 +34,7 @@ export default function ProfessorTable({ professors }) {
         <thead>
           <tr>
             <th scope="col">Name</th><th scope="col">Title</th><th scope="col">Email</th>
-            <th scope="col">Lab</th><th scope="col">Tags</th><th scope="col">Status</th>
+            <th scope="col">Personal website</th><th scope="col">Tags</th><th scope="col">Status</th>
           </tr>
         </thead>
         <tbody>
@@ -43,7 +43,7 @@ export default function ProfessorTable({ professors }) {
               <td data-label="Name"><Link className="professor-name" to={`/professors/${professor.id}`}>{professor.name}</Link></td>
               <td data-label="Title">{professor.title}</td>
               <td data-label="Email">{professor.email ? <a href={`mailto:${professor.email}`}>{professor.email}</a> : <span className="muted">—</span>}</td>
-              <td data-label="Lab"><ExternalLink href={professor.lab_url}>Visit lab</ExternalLink></td>
+              <td data-label="Personal website"><ExternalLink href={professor.lab_url}>Personal website</ExternalLink></td>
               <td data-label="Tags">
                 <div className="tag-list">
                   {professor.tags.length > 0 ? professor.tags.map((tag) => <span className="tag" key={tag}>{tag}</span>) : <span className="muted">—</span>}
@@ -61,4 +61,3 @@ export default function ProfessorTable({ professors }) {
     </div>
   );
 }
-

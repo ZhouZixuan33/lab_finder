@@ -62,7 +62,6 @@ class ProfessorResearchResult(DomainModel):
     research_summary: str = Field(min_length=40, max_length=2_000)
     tags: list[str] = Field(min_length=1, max_length=3)
     homepage_source_id: str | None = None
-    lab_source_id: str | None = None
     publication_source_ids: list[str] = Field(default_factory=list, max_length=25)
     evidence_source_ids: list[str] = Field(min_length=1, max_length=5)
     confidence: float | None = Field(default=None, ge=0, le=1)
@@ -74,5 +73,7 @@ class ValidatedProfessorResearch(DomainModel):
     homepage_url: str | None = None
     lab_url: str | None = None
     publications: list[OpenAlexPublication] = Field(default_factory=list)
+    # Internal refresh status: unavailable is different from a successful empty result.
+    publications_unavailable: bool = Field(default=False, exclude=True)
     source_urls: list[str] = Field(default_factory=list)
     confidence: float | None = None

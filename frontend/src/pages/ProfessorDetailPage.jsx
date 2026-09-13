@@ -96,7 +96,7 @@ export default function ProfessorDetailPage() {
               </button>}
           <ExternalProfileLink href={professor.directory_profile_url}>UIUC profile</ExternalProfileLink>
           <ExternalProfileLink href={professor.homepage_url}>Homepage</ExternalProfileLink>
-          <ExternalProfileLink href={professor.lab_url}>Lab website</ExternalProfileLink>
+          <ExternalProfileLink href={professor.lab_url}>Personal website</ExternalProfileLink>
         </div>
       </section>
 

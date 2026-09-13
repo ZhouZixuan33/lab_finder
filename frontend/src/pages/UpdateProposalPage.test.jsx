@@ -61,6 +61,7 @@ test("shows field and publication differences and applies the proposal as a whol
   expect(await screen.findByRole("heading", { name: "Professor update" })).toBeInTheDocument();
   expect(screen.getByText("Old research summary.")).toBeInTheDocument();
   expect(screen.getByText("New research summary.")).toBeInTheDocument();
+  expect(screen.getByRole("rowheader", { name: /Personal website/ })).toBeInTheDocument();
   expect(screen.getByText("Dependable AI Hardware")).toBeInTheDocument();
   expect(screen.getByText("Confidence:").parentElement).toHaveTextContent("92%");
   await user.click(screen.getByRole("button", { name: "Apply all changes" }));

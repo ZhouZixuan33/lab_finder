@@ -58,7 +58,6 @@ def test_validation_resolves_only_verified_source_and_publication_ids() -> None:
             "Security & Privacy",
         ],
         homepage_source_id=page.source_id,
-        lab_source_id=page.source_id,
         publication_source_ids=[publication.source_id],
         evidence_source_ids=[page.source_id],
         confidence=0.9,
@@ -72,7 +71,7 @@ def test_validation_resolves_only_verified_source_and_publication_ids() -> None:
     )
 
     assert validated.homepage_url == "https://alice.example.edu/lab"
-    assert validated.lab_url == "https://alice.example.edu/lab"
+    assert validated.lab_url is None  # The independent homepage graph fills this later.
     assert validated.tags == ["Security & Privacy", "Computer Architecture & Systems"]
     assert [item.openalex_id for item in validated.publications] == ["W1"]
     assert validated.source_urls == ["https://alice.example.edu/lab"]

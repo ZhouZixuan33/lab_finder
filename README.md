@@ -6,7 +6,7 @@ Lab Application Tracker is a private, local web application for exploring the re
 
 - Browse and search UIUC ECE professors in one table.
 - Filter by broad research tag or application state.
-- View research summaries, lab links, source links, and recent publications.
+- View research summaries, personal website links, source links, and recent publications.
 - Track `Interested → Applied → Accepted/Rejected`, an application date, and notes.
 - Add newly listed professors without changing existing professor records.
 - Review and approve differences from a single-professor update check.

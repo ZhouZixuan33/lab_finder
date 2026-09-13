@@ -70,7 +70,7 @@ def create_research_tools(
             coroutine=search_professor_web,
             name="search_professor_web",
             description=(
-                "Search for the named professor's official homepage, research group, "
+                "Search for the named professor's official profile "
                 "and research evidence. Input only a focused search query."
             ),
             args_schema=SearchProfessorWebInput,

@@ -215,6 +215,32 @@ def test_single_check_creates_pending_without_writes_then_apply_is_atomic(
     )
 
 
+def test_missing_author_preserves_publications_when_homepage_proposal_is_applied(tmp_path: Path):
+    research = changed_research().model_copy(update={
+        "publications": [], "publications_unavailable": True,
+        "lab_url": "https://alice.github.io/",
+    })
+    client, _, professor_id = build_client(tmp_path / "missing-author.db", research)
+    with client:
+        before = client.get(f"/api/professors/{professor_id}").json()
+        started = client.post(
+            "/api/update-checks", json={"scope": "professor", "professor_id": professor_id},
+        )
+        completed = wait_for_job(client, started.json()["job_id"])
+        assert completed["status"] == "completed"
+        proposal_id = completed["proposal_id"]
+        proposal = client.get(f"/api/update-proposals/{proposal_id}").json()
+        assert proposal["publication_diff"]["removed"] == []
+        assert proposal["publication_diff"]["added"] == []
+        assert proposal["publication_diff"]["proposed"][0]["title"] == "Old Paper"
+        assert client.post(f"/api/update-proposals/{proposal_id}/apply").status_code == 200
+        after = client.get(f"/api/professors/{professor_id}").json()
+    assert after["lab_url"] == "https://alice.github.io/"
+    assert [p["title"] for p in after["publications"]] == [
+        p["title"] for p in before["publications"]
+    ]
+
+
 def test_no_difference_returns_changed_false_and_reject_is_one_way(tmp_path: Path) -> None:
     database_path = tmp_path / "proposal-no-change.db"
     unchanged = ValidatedProfessorResearch(

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import sys
 from typing import Any, TextIO
 
@@ -12,8 +13,28 @@ LOGGER_NAME = "lab_tracker.research"
 _HANDLER_MARKER = "_lab_tracker_terminal_handler"
 
 
+class UpdatePollAccessFilter(logging.Filter):
+    """Hide successful status polling while keeping request failures visible."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Uvicorn access arguments: client, method, path, HTTP version, status.
+        if not isinstance(record.args, tuple) or len(record.args) != 5:
+            return True
+        _, method, path, _, status = record.args
+        return not (
+            method == "GET"
+            and status == 200
+            and isinstance(path, str)
+            and re.fullmatch(r"/api/update-checks/[^/?]+(?:\?.*)?", path)
+        )
+
+
 def configure_application_logging(*, stream: TextIO | None = None) -> None:
-    """Configure one application-owned terminal handler without touching Uvicorn logs."""
+    """Configure research logs and suppress successful Uvicorn status polling."""
+
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(item, UpdatePollAccessFilter) for item in access_logger.filters):
+        access_logger.addFilter(UpdatePollAccessFilter())
 
     application_logger = logging.getLogger("lab_tracker")
     if not any(getattr(handler, _HANDLER_MARKER, False) for handler in application_logger.handlers):

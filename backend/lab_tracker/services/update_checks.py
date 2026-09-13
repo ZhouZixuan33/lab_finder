@@ -16,10 +16,12 @@ from lab_tracker.db.migrations import run_migrations
 from lab_tracker.diagnostics import (
     emit_professor_extracted,
     emit_professor_research_failed,
+    emit_research_event,
 )
 from lab_tracker.models.professor import ProfessorCreate
 from lab_tracker.models.publication import PublicationCreate
 from lab_tracker.models.research import (
+    OpenAlexPublication,
     ResearchIdentity,
     SearchHit,
     ValidatedProfessorResearch,
@@ -27,6 +29,8 @@ from lab_tracker.models.research import (
 from lab_tracker.repositories.professors import ProfessorsRepository
 from lab_tracker.repositories.publications import PublicationsRepository
 from lab_tracker.services.discovery import FacultyCandidate, FacultyDiscoveryClient
+from lab_tracker.services.homepage_graph import HomepageGraph
+from lab_tracker.services.homepage_tools import WebpageProvider, create_homepage_tools
 from lab_tracker.services.http import RateLimitedHttpClient
 from lab_tracker.services.identity import (
     AmbiguousIdentityError,
@@ -34,12 +38,13 @@ from lab_tracker.services.identity import (
     IdentityIndex,
 )
 from lab_tracker.services.jobs import JobRegistry, JobScope, JobSnapshot
-from lab_tracker.services.openalex_provider import OpenAlexProvider
+from lab_tracker.services.openalex_provider import OpenAlexAuthorNotFoundError, OpenAlexProvider
 from lab_tracker.services.page_extractor import PageExtractor
 from lab_tracker.services.rate_limit import SerialRateLimiter
 from lab_tracker.services.research_graph import ProfessorResearchGraph
 from lab_tracker.services.research_sources import CandidateSourceRegistry
 from lab_tracker.services.research_tools import create_research_tools
+from lab_tracker.services.tavily_extract import TavilyExtractProvider
 from lab_tracker.services.tavily_provider import TavilyProvider
 from lab_tracker.services.updates import (
     PendingUpdateExistsError,
@@ -76,6 +81,29 @@ def _source_hash(candidate: FacultyCandidate, research: ValidatedProfessorResear
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+class _PublicationLookup:
+    """One research run can continue when OpenAlex has no matching author."""
+
+    def __init__(self, provider: OpenAlexProvider) -> None:
+        self.provider = provider
+        self.unavailable = False
+
+    async def get_recent_publications(
+        self, identity: ResearchIdentity,
+    ) -> list[OpenAlexPublication]:
+        if self.unavailable:
+            return []
+        try:
+            return await self.provider.get_recent_publications(identity)
+        except OpenAlexAuthorNotFoundError:
+            self.unavailable = True
+            emit_research_event(
+                "openalex.author_not_found", professor=identity.name,
+                action="continue_research_preserve_existing_publications",
+            )
+            return []
+
+
 class LangGraphCandidateResearcher:
     def __init__(
         self,
@@ -84,11 +112,13 @@ class LangGraphCandidateResearcher:
         tavily: TavilyProvider,
         openalex: OpenAlexProvider,
         page_http: RateLimitedHttpClient,
+        homepage_reader: WebpageProvider,
     ) -> None:
         self.chat_model = chat_model
         self.tavily = tavily
         self.openalex = openalex
         self.page_http = page_http
+        self.homepage_reader = homepage_reader
 
     async def research(self, candidate: FacultyCandidate) -> ValidatedProfessorResearch:
         return await self._research(candidate, required_refresh=False)
@@ -122,21 +152,22 @@ class LangGraphCandidateResearcher:
         )
         preloaded_sources = []
         initial_publications = []
+        publication_lookup = _PublicationLookup(self.openalex)
         if required_refresh:
             refresh_hits = await self.tavily.search(
                 f"{candidate.name} UIUC ECE research lab publications"
             )
             preloaded_sources = registry.register_hits(refresh_hits)
-            initial_publications = await self.openalex.get_recent_publications(identity)
+            initial_publications = await publication_lookup.get_recent_publications(identity)
         page_extractor = PageExtractor(self.page_http, registry)
         tools = create_research_tools(
             identity=identity,
             registry=registry,
             tavily=self.tavily,
             page_extractor=page_extractor,
-            openalex=self.openalex,
+            openalex=publication_lookup,
         )
-        return await ProfessorResearchGraph(
+        research = await ProfessorResearchGraph(
             identity=identity,
             chat_model=self.chat_model,
             tools=tools,
@@ -144,6 +175,15 @@ class LangGraphCandidateResearcher:
             initial_publications=initial_publications,
             preloaded_sources=preloaded_sources,
         ).ainvoke()
+        personal_url = await HomepageGraph(
+            identity=identity,
+            chat_model=self.chat_model,
+            tools=create_homepage_tools(search=self.tavily, reader=self.homepage_reader),
+        ).ainvoke()
+        return research.model_copy(update={
+            "lab_url": personal_url,
+            "publications_unavailable": publication_lookup.unavailable,
+        })
 
 
 class UpdateCheckService:
@@ -388,8 +428,9 @@ def build_default_update_check_service(
         http_client,
         SerialRateLimiter(settings.openalex_min_interval_seconds),
     )
+    tavily_limiter = SerialRateLimiter(settings.tavily_min_interval_seconds)
     tavily = TavilyProvider(
-        limiter=SerialRateLimiter(settings.tavily_min_interval_seconds),
+        limiter=tavily_limiter,
         api_key=settings.tavily_api_key,
     )
     openalex = OpenAlexProvider(openalex_http, api_key=settings.openalex_api_key)
@@ -405,6 +446,9 @@ def build_default_update_check_service(
         tavily=tavily,
         openalex=openalex,
         page_http=page_http,
+        homepage_reader=TavilyExtractProvider(
+            http_client, api_key=settings.tavily_api_key, limiter=tavily_limiter,
+        ),
     )
     professor_updates = ProfessorUpdateService(settings.database_path, researcher)
     return UpdateCheckService(

@@ -90,7 +90,6 @@ def validate_research_result(
         research_summary=" ".join(result.research_summary.split()),
         tags=tags,
         homepage_url=resolve_link(result.homepage_source_id, "homepage"),
-        lab_url=resolve_link(result.lab_source_id, "lab"),
         publications=selected_publications,
         source_urls=[registry.get(source_id).url for source_id in evidence_ids],
         confidence=result.confidence,

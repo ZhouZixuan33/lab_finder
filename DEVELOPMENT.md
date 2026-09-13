@@ -91,7 +91,7 @@ Faculty discovery first parses the official UIUC ECE directory with deterministi
 
 For each new professor, a bounded LangGraph `StateGraph` gives the model the verified name and email and exposes three protected tools:
 
-- `search_professor_web`: search with Tavily for likely official homepages, lab sites, and research evidence.
+- `search_professor_web`: search with Tavily for official profiles and research evidence.
 - `extract_candidate_page`: fetch and extract text only from a server-registered candidate URL.
 - `get_recent_publications`: query OpenAlex using the professor's validated identity.
 
@@ -99,9 +99,15 @@ The graph disables parallel tool calls and enforces budgets of at most three sea
 
 Generated tags are limited to one through three values from a controlled set of 12 broad ECE research categories. Narrow or invented tags fail validation rather than being stored.
 
+After research, a separate `HomepageGraph` finds the professor's personal website. Its three nodes are `agent`, `tools`, and `finalize`. The prompt asks the model to read the official profile first, then search if needed. The model receives `search_web(query)` (Tavily Search) and `read_webpage(url)` (Tavily Extract, basic Markdown). Both providers share `TAVILY_API_KEY` and the Tavily rate limiter. There are at most five tool attempts, including failures, followed by one structured finalization without external tools. The fifth tool result goes directly to finalization. This means at most six model calls for this separate homepage stage.
+
+The selected URL must appear in a successful page-read result and must not be the supplied official profile or its returned alias. Identity and page type are judged by the model. A confirmed URL is stored in the existing `lab_url` field and displayed as **Personal website**; `homepage_url` keeps its existing behavior. Unconfirmed results are null. Existing lab links are not automatically replaced: use a single-professor check and review its proposal. Tests use fake providers; real website extraction and model quality remain provider-dependent.
+
 New-professor research runs serially. Provider-specific rate limiters enforce conservative request intervals, and every successfully validated professor is committed in an independent transaction. A later professor failure therefore does not discard earlier results. The operation only inserts professors absent from the database and never modifies existing records.
 
 A single-professor check researches fresh data and creates an `update_proposals` row only when a real difference exists. The professor record changes only after the user applies the entire pending proposal. A proposal that fails to apply remains `pending`; a user may instead reject it permanently. A professor with a pending proposal cannot start another check.
+
+An OpenAlex author-not-found result no longer aborts research. It emits `openalex.author_not_found`, skips further author lookups within that research run, and allows homepage discovery to continue. An internal `publications_unavailable` flag makes the update proposal retain existing publications rather than proposing their deletion. A successful empty publication result still uses normal comparison; other provider errors retain their existing handling.
 
 Only one update job can be active at a time. Job IDs are UUID strings stored in memory, while proposal IDs are SQLite integer primary keys. The UI polls job state and shows compact running and completion feedback.
 

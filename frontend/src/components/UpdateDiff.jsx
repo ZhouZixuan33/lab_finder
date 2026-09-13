@@ -3,7 +3,7 @@ const FIELDS = [
   ["title", "Title"],
   ["email", "Email"],
   ["homepage_url", "Homepage"],
-  ["lab_url", "Lab"],
+  ["lab_url", "Personal website"],
   ["research_summary", "Research summary"],
   ["tags", "Tags"],
   ["source_urls", "Sources"],
@@ -79,4 +79,3 @@ export default function UpdateDiff({ proposal }) {
     </>
   );
 }
-

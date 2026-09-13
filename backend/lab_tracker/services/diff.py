@@ -128,6 +128,8 @@ def compare_professor_update(
         )
         for publication in research.publications
     ]
+    if research.publications_unavailable:
+        proposed_publications = [_publication_from_record(item) for item in current_publications]
     proposed_sources = list(
         dict.fromkeys([current.directory_profile_url, *research.source_urls])
     )
