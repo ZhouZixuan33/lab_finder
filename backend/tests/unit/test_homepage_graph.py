@@ -320,7 +320,7 @@ async def test_researcher_maps_homepage_to_lab_url_and_preserves_research(
 
 
 @pytest.mark.asyncio
-async def test_publication_lookup_does_not_hide_other_errors():
+async def test_publication_lookup_marks_ambiguous_author_as_unavailable():
     from lab_tracker.services.openalex_provider import AmbiguousOpenAlexAuthorError
     from lab_tracker.services.update_checks import _PublicationLookup
 
@@ -328,5 +328,6 @@ async def test_publication_lookup_does_not_hide_other_errors():
         async def get_recent_publications(self, identity):
             raise AmbiguousOpenAlexAuthorError("Multiple matches")
 
-    with pytest.raises(AmbiguousOpenAlexAuthorError):
-        await _PublicationLookup(BrokenProvider()).get_recent_publications(identity())
+    lookup = _PublicationLookup(BrokenProvider())
+    assert await lookup.get_recent_publications(identity()) == []
+    assert lookup.unavailable is True

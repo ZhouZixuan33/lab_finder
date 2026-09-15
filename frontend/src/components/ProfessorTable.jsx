@@ -34,7 +34,7 @@ export default function ProfessorTable({ professors }) {
         <thead>
           <tr>
             <th scope="col">Name</th><th scope="col">Title</th><th scope="col">Email</th>
-            <th scope="col">Personal website</th><th scope="col">Tags</th><th scope="col">Status</th>
+            <th scope="col">Personal website</th><th scope="col">Tags</th><th scope="col">Prospective students</th><th scope="col">Status</th>
           </tr>
         </thead>
         <tbody>
@@ -48,6 +48,9 @@ export default function ProfessorTable({ professors }) {
                 <div className="tag-list">
                   {professor.tags.length > 0 ? professor.tags.map((tag) => <span className="tag" key={tag}>{tag}</span>) : <span className="muted">—</span>}
                 </div>
+              </td>
+              <td data-label="Prospective students">
+                {professor.prospective_students_quote ? <span title={professor.prospective_students_quote}>Yes</span> : null}
               </td>
               <td data-label="Status">
                 {professor.application_state

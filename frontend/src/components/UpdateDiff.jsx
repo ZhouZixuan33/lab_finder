@@ -4,6 +4,8 @@ const FIELDS = [
   ["email", "Email"],
   ["homepage_url", "Homepage"],
   ["lab_url", "Personal website"],
+  ["prospective_students_quote", "Prospective students — evidence"],
+  ["prospective_students_source_url", "Prospective students — source"],
   ["research_summary", "Research summary"],
   ["tags", "Tags"],
   ["source_urls", "Sources"],

@@ -49,7 +49,7 @@ a:hover { color: #c84113; }
 .filter-chip input:focus-visible + span { outline: 3px solid #ffb000; outline-offset: 2px; }
 .filter-chip__count { position: absolute; right: 0.65rem; top: 0.38rem; font-size: 0.78rem; opacity: 0.72; }
 
-.table-wrap { overflow: hidden; border: 1px solid #dbe2eb; border-radius: 0.7rem; background: #fff; box-shadow: 0 0.5rem 1.5rem rgb(23 36 62 / 5%); }
+.table-wrap { overflow-x: auto; border: 1px solid #dbe2eb; border-radius: 0.7rem; background: #fff; box-shadow: 0 0.5rem 1.5rem rgb(23 36 62 / 5%); }
 .professor-table { width: 100%; border-collapse: collapse; }
 .professor-table th, .professor-table td { padding: 1rem 0.85rem; text-align: left; vertical-align: top; }
 .professor-table th { color: #536071; background: #edf1f5; font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; }

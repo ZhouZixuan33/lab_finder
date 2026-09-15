@@ -18,12 +18,11 @@ afterEach(() => {
 });
 
 test("stores, polls, completes, and clears an update job", async () => {
-  let polls = 0;
+  let complete = false;
   const onComplete = vi.fn();
   vi.stubGlobal("fetch", vi.fn((url, options = {}) => {
     if (options.method === "POST") return response({ job_id: "job-1" }, 202);
-    polls += 1;
-    return response(polls === 1
+    return response(!complete
       ? { job_id: "job-1", scope: "new", status: "running" }
       : { job_id: "job-1", scope: "new", status: "completed", outcome: "success", added_count: 2, failed_count: 0 });
   }));
@@ -31,6 +30,7 @@ test("stores, polls, completes, and clears an update job", async () => {
 
   await act(() => result.current.start({ scope: "new" }));
   expect(sessionStorage.getItem(UPDATE_JOB_STORAGE_KEY)).toBe("job-1");
+  complete = true;
   await waitFor(() => expect(result.current.job?.status).toBe("completed"));
   expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ added_count: 2 }));
   expect(sessionStorage.getItem(UPDATE_JOB_STORAGE_KEY)).toBeNull();
@@ -57,4 +57,3 @@ test("clears an expired job restored from session storage", async () => {
   expect(result.current.job).toBeNull();
   expect(sessionStorage.getItem(UPDATE_JOB_STORAGE_KEY)).toBeNull();
 });
-

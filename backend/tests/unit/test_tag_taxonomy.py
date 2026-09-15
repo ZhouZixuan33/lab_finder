@@ -6,18 +6,25 @@ from lab_tracker.services.tag_taxonomy import (
 
 def test_controlled_professor_taxonomy_has_the_approved_unique_categories() -> None:
     assert ALLOWED_PROFESSOR_TAGS == (
-        "Artificial Intelligence & Machine Learning",
-        "Computer Architecture & Systems",
-        "Networking & Distributed Systems",
+        "AI Algorithms & Learning Theory",
+        "NLP, LLMs & Generative AI",
+        "Computer Vision & Graphics",
+        "AI Infrastructure & Systems",
+        "Robotics, Control & Embodied AI",
+        "Computer Architecture & Hardware",
+        "Operating & Distributed Systems",
+        "Networking & Mobile Computing",
+        "Data Management & Mining",
+        "Programming Languages & Software Engineering",
         "Security & Privacy",
+        "Human-Computer Interaction & Computing Education",
+        "Algorithms & Computational Theory",
+        "Scientific & Numerical Computing",
         "Signal Processing & Communications",
-        "Control, Robotics & Autonomous Systems",
-        "Circuits & Integrated Systems",
-        "Semiconductor Devices & Microelectronics",
-        "Electromagnetics, Optics & Photonics",
+        "Electronics, Semiconductors & Photonics",
+        "Quantum Computing & Information",
+        "Biomedical & Computational Biology",
         "Power & Energy Systems",
-        "Bioengineering & Biomedical Systems",
-        "Quantum Information & Computing",
     )
     assert len(ALLOWED_PROFESSOR_TAGS) == len(set(ALLOWED_PROFESSOR_TAGS))
     assert all(tag.strip() == tag and tag for tag in ALLOWED_PROFESSOR_TAGS)

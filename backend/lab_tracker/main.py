@@ -33,9 +33,13 @@ class SpaStaticFiles(StaticFiles):
         except HTTPException as error:
             if error.status_code != 404 or path.startswith("api/"):
                 raise
-            return await super().get_response("index.html", scope)
+            response = await super().get_response("index.html", scope)
         if response.status_code == 404 and not path.startswith("api/"):
-            return await super().get_response("index.html", scope)
+            response = await super().get_response("index.html", scope)
+        if response.headers.get("content-type", "").startswith("text/html"):
+            # Revalidate the entry point after builds so it selects the new
+            # fingerprinted JS/CSS assets instead of retaining an old bundle.
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
 

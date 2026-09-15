@@ -69,8 +69,9 @@ class ProfessorsRepository:
             INSERT INTO professors (
                 name, title, email, directory_profile_url, homepage_url, lab_url,
                 research_summary, tags_json, source_urls_json, source_hash,
-                created_at, last_checked_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, last_checked_at, updated_at,
+                prospective_students_quote, prospective_students_source_url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 professor.name,
@@ -86,6 +87,8 @@ class ProfessorsRepository:
                 timestamp,
                 timestamp,
                 timestamp,
+                professor.prospective_students_quote,
+                professor.prospective_students_source_url,
             ),
         )
         record = self.get(int(cursor.lastrowid))
@@ -119,7 +122,8 @@ class ProfessorsRepository:
             UPDATE professors
             SET name = ?, title = ?, email = ?, directory_profile_url = ?,
                 homepage_url = ?, lab_url = ?, research_summary = ?, tags_json = ?,
-                source_urls_json = ?, source_hash = ?, last_checked_at = ?, updated_at = ?
+                source_urls_json = ?, source_hash = ?, last_checked_at = ?, updated_at = ?,
+                prospective_students_quote = ?, prospective_students_source_url = ?
             WHERE id = ?
             """,
             (
@@ -135,6 +139,8 @@ class ProfessorsRepository:
                 professor.source_hash,
                 timestamp,
                 timestamp,
+                professor.prospective_students_quote,
+                professor.prospective_students_source_url,
                 professor_id,
             ),
         )
@@ -218,6 +224,7 @@ class ProfessorsRepository:
             SELECT
                 p.id, p.name, p.title, p.email, p.directory_profile_url,
                 p.homepage_url, p.lab_url, p.tags_json, p.updated_at,
+                p.prospective_students_quote, p.prospective_students_source_url,
                 a.state AS application_state
             {from_sql}
             {where_sql}

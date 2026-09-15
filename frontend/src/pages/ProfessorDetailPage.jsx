@@ -86,6 +86,13 @@ export default function ProfessorDetailPage() {
           <h1>{professor.name}</h1>
           {professor.email && <a href={`mailto:${professor.email}`}>{professor.email}</a>}
           <p className="checked-at">Last checked {formatCheckedAt(professor.last_checked_at)}</p>
+          {professor.prospective_students_quote && (
+            <section aria-label="Prospective students">
+              <p><strong>Prospective students: Yes</strong></p>
+              <blockquote>{professor.prospective_students_quote}</blockquote>
+              <ExternalProfileLink href={professor.prospective_students_source_url}>Source</ExternalProfileLink>
+            </section>
+          )}
         </div>
         <div className="detail-actions">
           {professor.pending_proposal_id

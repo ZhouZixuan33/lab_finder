@@ -3,6 +3,7 @@ import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -15,7 +16,11 @@ from lab_tracker.models.application import ApplicationUpsert
 from lab_tracker.models.common import ApplicationState, ProposalStatus
 from lab_tracker.models.professor import ProfessorCreate
 from lab_tracker.models.publication import PublicationCreate
-from lab_tracker.models.research import OpenAlexPublication, ValidatedProfessorResearch
+from lab_tracker.models.research import (
+    OpenAlexPublication,
+    ResearchIdentity,
+    ValidatedProfessorResearch,
+)
 from lab_tracker.models.update import ProposalCreate
 from lab_tracker.repositories.applications import ApplicationsRepository
 from lab_tracker.repositories.professors import ProfessorsRepository
@@ -24,7 +29,7 @@ from lab_tracker.repositories.publications import PublicationsRepository
 from lab_tracker.services.diff import ProfessorUpdateSnapshot, PublicationDifference
 from lab_tracker.services.discovery import FacultyCandidate
 from lab_tracker.services.jobs import JobRegistry
-from lab_tracker.services.update_checks import UpdateCheckService
+from lab_tracker.services.update_checks import UpdateCheckService, _PublicationLookup
 from lab_tracker.services.updates import ProfessorUpdateService
 
 NOW = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
@@ -157,6 +162,52 @@ def wait_for_job(client: TestClient, job_id: str) -> dict[str, object]:
             return payload
         time.sleep(0.01)
     raise AssertionError("Update job did not finish")
+
+
+def test_publication_failure_still_returns_reviewable_and_applicable_update(tmp_path: Path):
+    research = changed_research().model_copy(update={
+        "prospective_students_quote": "Prospective students are welcome to apply.",
+        "prospective_students_source_url": "https://alice.example.edu",
+    })
+    client, researcher, professor_id = build_client(tmp_path / "publication-failure.db", research)
+
+    class FailingOpenAlex:
+        async def get_recent_publications(self, identity):
+            raise httpx.ReadTimeout("OpenAlex unavailable")
+
+    async def refresh(candidate):
+        lookup = _PublicationLookup(FailingOpenAlex())
+        papers = await lookup.get_recent_publications(ResearchIdentity(
+            name=candidate.name, title=candidate.title, affiliation=candidate.affiliation,
+            official_profile_url=candidate.directory_profile_url,
+        ))
+        return research.model_copy(update={
+            "publications": papers, "publications_unavailable": lookup.unavailable,
+        })
+
+    researcher.research_with_refresh = refresh
+    with client:
+        before = client.get(f"/api/professors/{professor_id}").json()
+        started = client.post("/api/update-checks", json={
+            "scope": "professor", "professor_id": professor_id,
+        })
+        completed = wait_for_job(client, started.json()["job_id"])
+        assert completed["status"] == "completed"
+        assert completed["changed"] is True
+        proposal_id = completed["proposal_id"]
+        proposal = client.get(f"/api/update-proposals/{proposal_id}").json()
+        assert proposal["new_values"]["research_summary"] == research.research_summary
+        assert proposal["publication_diff"]["removed"] == []
+        assert proposal["publication_diff"]["added"] == []
+        assert client.post(f"/api/update-proposals/{proposal_id}/apply").status_code == 200
+        after = client.get(f"/api/professors/{professor_id}").json()
+        assert after["research_summary"] == research.research_summary
+        assert after["tags"] == research.tags
+        assert after["prospective_students_quote"] == research.prospective_students_quote
+        assert [p["title"] for p in after["publications"]] == [
+            p["title"] for p in before["publications"]
+        ]
+        assert after["application"] == before["application"]
 
 
 def test_single_check_creates_pending_without_writes_then_apply_is_atomic(

@@ -16,6 +16,8 @@ class ProfessorCreate(DomainModel):
     directory_profile_url: str = Field(min_length=1)
     homepage_url: str | None = None
     lab_url: str | None = None
+    prospective_students_quote: str | None = None
+    prospective_students_source_url: str | None = None
     research_summary: str = Field(min_length=1)
     tags: list[str] = Field(default_factory=list)
     source_urls: list[str] = Field(default_factory=list)
@@ -37,6 +39,8 @@ class ProfessorListItem(DomainModel):
     directory_profile_url: str
     homepage_url: str | None
     lab_url: str | None
+    prospective_students_quote: str | None = None
+    prospective_students_source_url: str | None = None
     tags: list[str]
     application_state: ApplicationState | None = None
     updated_at: datetime

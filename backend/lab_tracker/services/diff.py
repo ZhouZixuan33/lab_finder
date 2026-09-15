@@ -21,6 +21,8 @@ class ProfessorUpdateSnapshot(DomainModel):
     directory_profile_url: str
     homepage_url: str | None = None
     lab_url: str | None = None
+    prospective_students_quote: str | None = None
+    prospective_students_source_url: str | None = None
     research_summary: str
     tags: list[str] = Field(default_factory=list)
     source_urls: list[str] = Field(default_factory=list)
@@ -112,6 +114,8 @@ def compare_professor_update(
         directory_profile_url=current.directory_profile_url,
         homepage_url=current.homepage_url,
         lab_url=current.lab_url,
+        prospective_students_quote=current.prospective_students_quote,
+        prospective_students_source_url=current.prospective_students_source_url,
         research_summary=current.research_summary,
         tags=current.tags,
         source_urls=current.source_urls,
@@ -140,6 +144,8 @@ def compare_professor_update(
         directory_profile_url=current.directory_profile_url,
         homepage_url=research.homepage_url,
         lab_url=research.lab_url,
+        prospective_students_quote=research.prospective_students_quote,
+        prospective_students_source_url=research.prospective_students_source_url,
         research_summary=research.research_summary,
         tags=research.tags,
         source_urls=proposed_sources,
@@ -162,6 +168,8 @@ def compare_professor_update(
         "directory_profile_url",
         "homepage_url",
         "lab_url",
+        "prospective_students_quote",
+        "prospective_students_source_url",
         "research_summary",
         "tags",
         "source_urls",

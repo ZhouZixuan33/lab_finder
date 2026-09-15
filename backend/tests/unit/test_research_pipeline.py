@@ -1,5 +1,6 @@
 """Exercise orchestration with the real research graph and deterministic providers."""
 
+import asyncio
 import json
 
 import httpx
@@ -15,7 +16,7 @@ from lab_tracker.services.research_graph import ResearchGraphError
 OFFICIAL = "https://ece.illinois.edu/about/directory/faculty/alice"
 PERSONAL = "https://alice.example.edu/research"
 SUMMARY = "Alice Systems researches secure computing and reliable computer architecture."
-TAGS = ["Security & Privacy", "Computer Architecture & Systems"]
+TAGS = ["Security & Privacy", "Computer Architecture & Hardware"]
 
 
 def pipeline(
@@ -179,11 +180,29 @@ async def test_invalid_webpage_evidence_never_starts_publication_lookup(monkeypa
     [
         AmbiguousOpenAlexAuthorError("Multiple authors"),
         httpx.ConnectError("unavailable"),
+        httpx.ReadTimeout("timed out"),
+        ValueError("Malformed provider response"),
+        RuntimeError("Unexpected provider failure"),
     ],
 )
-async def test_unrecovered_publication_error_propagates_after_summary(monkeypatch, error):
+@pytest.mark.parametrize("refresh", [False, True])
+async def test_publication_error_preserves_validated_research(monkeypatch, error, refresh):
     researcher, candidate, events, captured, _ = pipeline(monkeypatch, publication_error=error)
-    with pytest.raises(type(error)):
-        await researcher.research_with_refresh(candidate)
+    run = researcher.research_with_refresh if refresh else researcher.research
+    result = await run(candidate)
+    assert result.research_summary == SUMMARY
+    assert result.tags == TAGS
+    assert result.lab_url == PERSONAL
+    assert result.publications == []
+    assert result.publications_unavailable is True
     assert events[-2:] == ["summary", "publications"]
     assert len(captured) == 1
+
+
+@pytest.mark.asyncio
+async def test_publication_cancellation_still_cancels_research(monkeypatch):
+    researcher, candidate, _, _, _ = pipeline(
+        monkeypatch, publication_error=asyncio.CancelledError()
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await researcher.research_with_refresh(candidate)

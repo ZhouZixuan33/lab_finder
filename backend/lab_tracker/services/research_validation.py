@@ -76,7 +76,25 @@ def validate_research_result(
             f"invalid tags: {invalid_text}"
         )
 
+    prospective_quote = None
+    prospective_url = None
+    if (
+        result.prospective_students_quote is not None
+        or result.prospective_students_source_id is not None
+    ):
+        if not result.prospective_students_quote or not result.prospective_students_source_id:
+            raise ResearchValidationError("prospective students requires both quote and source ID")
+        prospective_url = resolve_link(
+            result.prospective_students_source_id, "prospective students"
+        )
+        prospective_quote = " ".join(result.prospective_students_quote.split())
+        page_text = " ".join(page_by_id[result.prospective_students_source_id].text.split())
+        if not prospective_quote or prospective_quote not in page_text:
+            raise ResearchValidationError("prospective students quote must occur in the cited page")
+
     return ValidatedProfessorResearch(
+        prospective_students_quote=prospective_quote,
+        prospective_students_source_url=prospective_url,
         research_summary=" ".join(result.research_summary.split()),
         tags=tags,
         homepage_url=resolve_link(result.homepage_source_id, "homepage"),

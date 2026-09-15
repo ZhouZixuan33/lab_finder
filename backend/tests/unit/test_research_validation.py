@@ -12,6 +12,7 @@ from lab_tracker.services.research_validation import (
     ResearchValidationError,
     validate_research_result,
 )
+from lab_tracker.services.tag_taxonomy import ALLOWED_PROFESSOR_TAGS
 
 
 def evidence() -> tuple[
@@ -37,6 +38,20 @@ def evidence() -> tuple[
     return registry, page
 
 
+@pytest.mark.parametrize("tag", ALLOWED_PROFESSOR_TAGS)
+def test_validation_accepts_each_current_category(tag: str) -> None:
+    registry, page = evidence()
+    result = ProfessorResearchResult(
+        research_summary="A sufficiently detailed evidence-grounded research summary.",
+        tags=[tag],
+        evidence_source_ids=[page.source_id],
+    )
+
+    validated = validate_research_result(result, pages=[page], registry=registry)
+
+    assert validated.tags == [tag]
+
+
 def test_validation_resolves_only_verified_webpage_ids() -> None:
     registry, page = evidence()
     result = ProfessorResearchResult(
@@ -45,7 +60,7 @@ def test_validation_resolves_only_verified_webpage_ids() -> None:
         ),
         tags=[
             "Security & Privacy",
-            "Computer Architecture & Systems",
+            "Computer Architecture & Hardware",
             "Security & Privacy",
         ],
         homepage_source_id=page.source_id,
@@ -61,7 +76,7 @@ def test_validation_resolves_only_verified_webpage_ids() -> None:
 
     assert validated.homepage_url == "https://alice.example.edu/lab"
     assert validated.lab_url is None  # The orchestrator attaches the discovered homepage.
-    assert validated.tags == ["Security & Privacy", "Computer Architecture & Systems"]
+    assert validated.tags == ["Security & Privacy", "Computer Architecture & Hardware"]
     assert validated.publications == []
     assert validated.source_urls == ["https://alice.example.edu/lab"]
 
@@ -77,7 +92,7 @@ def test_validation_rejects_unknown_model_generated_ids(field: str, value: objec
     registry, page = evidence()
     result = ProfessorResearchResult(
         research_summary="A sufficiently detailed summary grounded in validated research evidence.",
-        tags=["Computer Architecture & Systems"],
+        tags=["Computer Architecture & Hardware"],
         evidence_source_ids=[page.source_id],
     ).model_copy(update={field: value})
 
@@ -94,7 +109,7 @@ def test_validation_rejects_summary_without_identity_matched_page_evidence() -> 
     unverified_page = page.model_copy(update={"identity_signals": IdentitySignals()})
     result = ProfessorResearchResult(
         research_summary="A sufficiently detailed summary that lacks verified identity evidence.",
-        tags=["Computer Architecture & Systems"],
+        tags=["Computer Architecture & Hardware"],
         evidence_source_ids=[page.source_id],
     )
 
@@ -109,10 +124,10 @@ def test_validation_rejects_summary_without_identity_matched_page_evidence() -> 
 @pytest.mark.parametrize(
     "tags",
     [
-        ["Computer Architecture & Systems"],
+        ["Computer Architecture & Hardware"],
         [
-            "Computer Architecture & Systems",
-            "Networking & Distributed Systems",
+            "Computer Architecture & Hardware",
+            "Networking & Mobile Computing",
             "Security & Privacy",
         ],
     ],
@@ -129,7 +144,7 @@ def test_research_result_accepts_one_to_three_tags(tags: list[str]) -> None:
 
 @pytest.mark.parametrize("count", [0, 4])
 def test_research_result_requires_one_to_three_tags(count: int) -> None:
-    tags = ["Computer Architecture & Systems"] * count
+    tags = ["Computer Architecture & Hardware"] * count
 
     with pytest.raises(ValidationError):
         ProfessorResearchResult(
@@ -144,6 +159,8 @@ def test_research_result_requires_one_to_three_tags(count: int) -> None:
     [
         "Congestion Control",
         "Systems for Everything",
+        "Artificial Intelligence & Machine Learning",
+        "Computer Architecture & Systems",
         "computer architecture & systems",
     ],
 )

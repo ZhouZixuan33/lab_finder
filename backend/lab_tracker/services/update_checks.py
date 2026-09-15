@@ -82,7 +82,7 @@ def _source_hash(candidate: FacultyCandidate, research: ValidatedProfessorResear
 
 
 class _PublicationLookup:
-    """One research run can continue when OpenAlex has no matching author."""
+    """Optional publication enrichment must not discard validated webpage research."""
 
     def __init__(self, provider: OpenAlexProvider) -> None:
         self.provider = provider
@@ -99,6 +99,16 @@ class _PublicationLookup:
             self.unavailable = True
             emit_research_event(
                 "openalex.author_not_found", professor=identity.name,
+                action="continue_research_preserve_existing_publications",
+            )
+            return []
+        except Exception as error:
+            # This boundary isolates all provider/response failures. Cancellation
+            # still propagates because asyncio.CancelledError is a BaseException.
+            self.unavailable = True
+            emit_research_event(
+                "openalex.publications_failed", professor=identity.name,
+                error_type=type(error).__name__,
                 action="continue_research_preserve_existing_publications",
             )
             return []
@@ -388,6 +398,8 @@ class UpdateCheckService:
             homepage_url=research.homepage_url,
             lab_url=research.lab_url,
             research_summary=research.research_summary,
+            prospective_students_quote=research.prospective_students_quote,
+            prospective_students_source_url=research.prospective_students_source_url,
             tags=research.tags,
             source_urls=source_urls,
             source_hash=_source_hash(candidate, research),

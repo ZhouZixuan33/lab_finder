@@ -38,4 +38,9 @@ def test_finalizer_prompt_contains_the_complete_taxonomy_and_selection_rules() -
     assert "exact category names" in prompt
     assert "Do not create new categories" in prompt
     assert "Congestion control" in prompt
-    assert "Networking & Distributed Systems" in prompt
+    assert "Networking & Mobile Computing" in prompt
+    assert "Category definitions" in prompt
+    assert "Using an existing AI model" in prompt
+    assert "Model compression or quantization alone is not proof" in prompt
+    assert "Do not automatically add AI Algorithms & Learning Theory" in prompt
+    assert "Do not fill unused slots" in prompt

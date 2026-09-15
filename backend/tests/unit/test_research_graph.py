@@ -124,7 +124,7 @@ def final_result(
         ),
         "tags": [
             "Security & Privacy",
-            "Computer Architecture & Systems",
+            "Computer Architecture & Hardware",
         ],
         "homepage_source_id": homepage_source_id,
         "evidence_source_ids": [evidence_source_id],
@@ -288,7 +288,7 @@ async def test_finalizer_retries_twice_then_accepts_valid_structure() -> None:
 
     assert result.tags == [
         "Security & Privacy",
-        "Computer Architecture & Systems",
+        "Computer Architecture & Hardware",
     ]
     assert len(model.finalizer_inputs) == 3
     retry_prompt = " ".join(

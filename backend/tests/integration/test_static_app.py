@@ -47,6 +47,8 @@ def test_serves_built_frontend_with_spa_fallback_and_keeps_api_priority(
 
     assert root.status_code == 200
     assert client_route.text == root.text
+    assert root.headers["cache-control"] == "no-cache"
+    assert client_route.headers["cache-control"] == "no-cache"
     assert asset.text == "window.appLoaded = true;"
     assert health.json() == {"status": "ok", "database": "ok"}
     assert missing_api.status_code == 404
