@@ -229,7 +229,9 @@ async def test_search_then_read_is_supported_without_source_ids():
 @pytest.mark.parametrize("refresh", [False, True])
 @pytest.mark.parametrize("author_missing", [False, True])
 async def test_researcher_maps_homepage_to_lab_url_and_preserves_research(
-    monkeypatch, refresh, author_missing,
+    monkeypatch,
+    refresh,
+    author_missing,
 ):
     from lab_tracker.models.research import ValidatedProfessorResearch
     from lab_tracker.services import update_checks
@@ -239,19 +241,15 @@ async def test_researcher_maps_homepage_to_lab_url_and_preserves_research(
     research = ValidatedProfessorResearch(
         research_summary="Existing summary",
         tags=["Security & Privacy"],
-        homepage_url=OFFICIAL,
         source_urls=[OFFICIAL],
     )
 
+    research.personal_homepage_url = PERSONAL
+
     class FakeResearchGraph:
         def __init__(self, **kwargs):
-            assert web.urls == [PERSONAL]  # Homepage discovery already ran.
-            assert http.urls == [OFFICIAL, PERSONAL.rstrip("/")]
-            assert [page.url for page in kwargs["initial_pages"]] == [
-                OFFICIAL, PERSONAL.rstrip("/"),
-            ]
-            assert kwargs["attempted_source_ids"] == ["source_001", "source_002"]
-            assert "get_recent_publications" not in [tool.name for tool in kwargs["tools"]]
+            assert kwargs["reader"] is web
+            assert kwargs["mapper"] is web
             assert publications.calls == 0
 
         async def ainvoke(self):
@@ -275,11 +273,13 @@ async def test_researcher_maps_homepage_to_lab_url_and_preserves_research(
 
         async def get(self, url):
             self.urls.append(url)
-            return httpx.Response(200, request=httpx.Request("GET", url), text=(
-                "<main>Alice Systems at UIUC researches secure computing systems.</main>"
-            ))
+            return httpx.Response(
+                200,
+                request=httpx.Request("GET", url),
+                text=("<main>Alice Systems at UIUC researches secure computing systems.</main>"),
+            )
 
-    monkeypatch.setattr(update_checks, "ProfessorResearchGraph", FakeResearchGraph)
+    monkeypatch.setattr(update_checks, "UnifiedResearchGraph", FakeResearchGraph)
     web = FakeWeb()
     model = FakeModel(
         [
@@ -302,18 +302,17 @@ async def test_researcher_maps_homepage_to_lab_url_and_preserves_research(
         name="Alice Systems",
         title="Professor",
         email=None,
-        directory_profile_url=OFFICIAL,
+        official_profile_url=OFFICIAL,
     )
     result = await (
         researcher.research_with_refresh(candidate) if refresh else researcher.research(candidate)
     )
-    assert result.lab_url == PERSONAL
-    assert result.homepage_url == research.homepage_url
+    assert result.personal_homepage_url == PERSONAL
     assert result.research_summary == research.research_summary
     assert result.publications == research.publications
     assert result.tags == research.tags
     assert result.source_urls == research.source_urls
-    assert research.lab_url is None  # Do not mutate the old graph's result.
+    assert research.personal_homepage_url == PERSONAL  # Enrichment does not mutate graph output.
     assert result.publications_unavailable is author_missing
     assert publications.calls == 1
     assert events == ["summary_validated", "publications"]

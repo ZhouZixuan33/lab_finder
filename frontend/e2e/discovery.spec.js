@@ -9,7 +9,7 @@ test("shows only compact feedback for a partially successful discovery", async (
     if (url.pathname === "/api/tags") return route.fulfill({ json: { items: [] } });
     if (url.pathname === "/api/professors") {
       catalogRequests += 1;
-      const items = catalogRequests > 1 ? [{ id: 21, name: "New Professor", title: "Assistant Professor", email: "new@illinois.edu", lab_url: null, tags: ["Photonics"], application_state: null }] : [];
+      const items = catalogRequests > 1 ? [{ id: 21, name: "New Professor", title: "Assistant Professor", email: "new@illinois.edu", personal_homepage_url: null, tags: ["Photonics"], application_state: null }] : [];
       return route.fulfill({ json: { items, pagination: { page: 1, page_size: 25, total: items.length, pages: items.length ? 1 : 0 } } });
     }
     if (url.pathname === "/api/update-checks" && request.method() === "POST") return route.fulfill({ status: 202, json: { job_id: "discovery-job" } });

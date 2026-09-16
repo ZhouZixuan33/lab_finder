@@ -67,19 +67,18 @@ class ProfessorsRepository:
         cursor = self.connection.execute(
             """
             INSERT INTO professors (
-                name, title, email, directory_profile_url, homepage_url, lab_url,
+                name, title, email, official_profile_url, personal_homepage_url,
                 research_summary, tags_json, source_urls_json, source_hash,
                 created_at, last_checked_at, updated_at,
                 prospective_students_quote, prospective_students_source_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 professor.name,
                 professor.title,
                 professor.email,
-                professor.directory_profile_url,
-                professor.homepage_url,
-                professor.lab_url,
+                professor.official_profile_url,
+                professor.personal_homepage_url,
                 professor.research_summary,
                 _json(professor.tags),
                 _json(professor.source_urls),
@@ -104,9 +103,7 @@ class ProfessorsRepository:
         return _professor_from_row(row) if row is not None else None
 
     def list_all(self) -> list[ProfessorRecord]:
-        rows = self.connection.execute(
-            "SELECT * FROM professors ORDER BY id ASC"
-        ).fetchall()
+        rows = self.connection.execute("SELECT * FROM professors ORDER BY id ASC").fetchall()
         return [_professor_from_row(row) for row in rows]
 
     def update(
@@ -120,8 +117,8 @@ class ProfessorsRepository:
         cursor = self.connection.execute(
             """
             UPDATE professors
-            SET name = ?, title = ?, email = ?, directory_profile_url = ?,
-                homepage_url = ?, lab_url = ?, research_summary = ?, tags_json = ?,
+            SET name = ?, title = ?, email = ?, official_profile_url = ?,
+                personal_homepage_url = ?, research_summary = ?, tags_json = ?,
                 source_urls_json = ?, source_hash = ?, last_checked_at = ?, updated_at = ?,
                 prospective_students_quote = ?, prospective_students_source_url = ?
             WHERE id = ?
@@ -130,9 +127,8 @@ class ProfessorsRepository:
                 professor.name,
                 professor.title,
                 professor.email,
-                professor.directory_profile_url,
-                professor.homepage_url,
-                professor.lab_url,
+                professor.official_profile_url,
+                professor.personal_homepage_url,
                 professor.research_summary,
                 _json(professor.tags),
                 _json(professor.source_urls),
@@ -211,10 +207,7 @@ class ProfessorsRepository:
         if where_sql:
             where_sql = f"WHERE {where_sql}"
 
-        from_sql = (
-            "FROM professors AS p "
-            "LEFT JOIN application_status AS a ON a.professor_id = p.id"
-        )
+        from_sql = "FROM professors AS p LEFT JOIN application_status AS a ON a.professor_id = p.id"
         total = self.connection.execute(
             f"SELECT COUNT(*) {from_sql} {where_sql}",
             parameters,
@@ -222,8 +215,8 @@ class ProfessorsRepository:
         rows = self.connection.execute(
             f"""
             SELECT
-                p.id, p.name, p.title, p.email, p.directory_profile_url,
-                p.homepage_url, p.lab_url, p.tags_json, p.updated_at,
+                p.id, p.name, p.title, p.email, p.official_profile_url,
+                p.personal_homepage_url, p.tags_json, p.updated_at,
                 p.prospective_students_quote, p.prospective_students_source_url,
                 a.state AS application_state
             {from_sql}

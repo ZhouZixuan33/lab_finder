@@ -29,7 +29,7 @@ async def test_extract_single_url_request_and_markdown_truncation():
         assert request.headers["Authorization"] == "Bearer test-key"
         assert json.loads(request.content) == {
             "urls": [url],
-            "extract_depth": "basic",
+            "extract_depth": "advanced",
             "format": "markdown",
             "include_images": False,
             "include_favicon": False,
@@ -50,7 +50,9 @@ async def test_extract_single_url_request_and_markdown_truncation():
         result = await provider.extract(url)
     assert result.requested_url == result.url == url
     assert result.content == markdown[:12_000]
-    assert result.truncated is True
+    assert result.content_truncated is True
+    assert result.original_content_chars == len(markdown)
+    assert result.truncated is False
     assert limiter.calls == 1
 
 

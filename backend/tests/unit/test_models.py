@@ -27,7 +27,7 @@ def test_professor_storage_model_accepts_legacy_free_form_tags() -> None:
         name="Jane Example",
         title="Professor",
         email="jane@example.edu",
-        directory_profile_url="https://ece.illinois.edu/example",
+        official_profile_url="https://ece.illinois.edu/example",
         research_summary="Works on useful systems.",
         tags=["Never Seen Before", "AI + Hardware"],
         source_urls=["https://ece.illinois.edu/example"],

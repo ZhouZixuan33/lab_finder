@@ -37,7 +37,7 @@ def test_profile_enrichment_fills_email_and_detects_research_evidence() -> None:
             name="Carol Researcher",
             title="Research Professor",
             email=None,
-            directory_profile_url="https://ece.illinois.edu/about/directory/faculty/carol",
+            official_profile_url="https://ece.illinois.edu/about/directory/faculty/carol",
         ),
         html,
     )
@@ -53,19 +53,19 @@ async def test_scope_new_skips_existing_before_research_and_continues_after_ambi
             name="Existing Person",
             title="Professor",
             email="existing@illinois.edu",
-            directory_profile_url="https://ece.illinois.edu/existing",
+            official_profile_url="https://ece.illinois.edu/existing",
         ),
         FacultyCandidate(
             name="Ambiguous Person",
             title="Professor",
             email="shared@illinois.edu",
-            directory_profile_url="https://ece.illinois.edu/ambiguous",
+            official_profile_url="https://ece.illinois.edu/ambiguous",
         ),
         FacultyCandidate(
             name="New Person",
             title="Assistant Professor",
             email="new@illinois.edu",
-            directory_profile_url="https://ece.illinois.edu/new",
+            official_profile_url="https://ece.illinois.edu/new",
         ),
     ]
     identities = IdentityIndex(
@@ -74,19 +74,19 @@ async def test_scope_new_skips_existing_before_research_and_continues_after_ambi
                 professor_id=1,
                 name="Existing Person",
                 email="existing@illinois.edu",
-                directory_profile_url="https://ece.illinois.edu/existing",
+                official_profile_url="https://ece.illinois.edu/existing",
             ),
             ExistingProfessorIdentity(
                 professor_id=2,
                 name="First Shared",
                 email="shared@illinois.edu",
-                directory_profile_url="https://ece.illinois.edu/first",
+                official_profile_url="https://ece.illinois.edu/first",
             ),
             ExistingProfessorIdentity(
                 professor_id=3,
                 name="Second Shared",
                 email="shared@illinois.edu",
-                directory_profile_url="https://ece.illinois.edu/second",
+                official_profile_url="https://ece.illinois.edu/second",
             ),
         ]
     )

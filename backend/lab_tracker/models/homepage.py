@@ -62,6 +62,8 @@ class ReadWebpageResult(DomainModel):
     url: str
     content: str = Field(min_length=1)
     truncated: bool = False
+    content_truncated: bool = False
+    original_content_chars: int | None = None
 
     @field_validator("requested_url", "url")
     @classmethod

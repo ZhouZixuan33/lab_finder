@@ -13,9 +13,8 @@ class ProfessorCreate(DomainModel):
     name: str = Field(min_length=1)
     title: str = Field(min_length=1)
     email: str | None = None
-    directory_profile_url: str = Field(min_length=1)
-    homepage_url: str | None = None
-    lab_url: str | None = None
+    official_profile_url: str = Field(min_length=1)
+    personal_homepage_url: str | None = None
     prospective_students_quote: str | None = None
     prospective_students_source_url: str | None = None
     research_summary: str = Field(min_length=1)
@@ -36,9 +35,8 @@ class ProfessorListItem(DomainModel):
     name: str
     title: str
     email: str | None
-    directory_profile_url: str
-    homepage_url: str | None
-    lab_url: str | None
+    official_profile_url: str
+    personal_homepage_url: str | None
     prospective_students_quote: str | None = None
     prospective_students_source_url: str | None = None
     tags: list[str]

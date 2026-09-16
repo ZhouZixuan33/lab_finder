@@ -25,7 +25,7 @@ def insert_professor(
     cursor = connection.execute(
         """
         INSERT INTO professors (
-            name, title, email, directory_profile_url, research_summary,
+            name, title, email, official_profile_url, research_summary,
             source_hash, created_at, last_checked_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,

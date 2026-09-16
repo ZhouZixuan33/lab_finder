@@ -82,7 +82,7 @@ class ProfessorUpdateService:
             name=current.name,
             title=current.title,
             email=current.email,
-            directory_profile_url=current.directory_profile_url,
+            official_profile_url=current.official_profile_url,
         )
         try:
             research = await self.researcher.research_with_refresh(candidate)

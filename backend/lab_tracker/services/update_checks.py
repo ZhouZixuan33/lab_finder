@@ -23,14 +23,12 @@ from lab_tracker.models.publication import PublicationCreate
 from lab_tracker.models.research import (
     OpenAlexPublication,
     ResearchIdentity,
-    SearchHit,
     ValidatedProfessorResearch,
 )
 from lab_tracker.repositories.professors import ProfessorsRepository
 from lab_tracker.repositories.publications import PublicationsRepository
 from lab_tracker.services.discovery import FacultyCandidate, FacultyDiscoveryClient
-from lab_tracker.services.homepage_graph import HomepageGraph
-from lab_tracker.services.homepage_tools import WebpageProvider, create_homepage_tools
+from lab_tracker.services.homepage_tools import WebpageProvider
 from lab_tracker.services.http import RateLimitedHttpClient
 from lab_tracker.services.identity import (
     AmbiguousIdentityError,
@@ -39,13 +37,10 @@ from lab_tracker.services.identity import (
 )
 from lab_tracker.services.jobs import JobRegistry, JobScope, JobSnapshot
 from lab_tracker.services.openalex_provider import OpenAlexAuthorNotFoundError, OpenAlexProvider
-from lab_tracker.services.page_extractor import PageExtractor
 from lab_tracker.services.rate_limit import SerialRateLimiter
-from lab_tracker.services.research_graph import ProfessorResearchGraph
-from lab_tracker.services.research_sources import CandidateSourceRegistry
-from lab_tracker.services.research_tools import create_research_tools
 from lab_tracker.services.tavily_extract import TavilyExtractProvider
 from lab_tracker.services.tavily_provider import TavilyProvider
+from lab_tracker.services.unified_research_graph import UnifiedResearchGraph
 from lab_tracker.services.updates import (
     PendingUpdateExistsError,
     ProfessorUpdateService,
@@ -73,7 +68,7 @@ def _source_hash(candidate: FacultyCandidate, research: ValidatedProfessorResear
             "name": candidate.name,
             "title": candidate.title,
             "email": candidate.email,
-            "directory_profile_url": candidate.directory_profile_url,
+            "official_profile_url": candidate.official_profile_url,
         },
         "research": research.model_dump(mode="json"),
     }
@@ -89,7 +84,8 @@ class _PublicationLookup:
         self.unavailable = False
 
     async def get_recent_publications(
-        self, identity: ResearchIdentity,
+        self,
+        identity: ResearchIdentity,
     ) -> list[OpenAlexPublication]:
         if self.unavailable:
             return []
@@ -98,7 +94,8 @@ class _PublicationLookup:
         except OpenAlexAuthorNotFoundError:
             self.unavailable = True
             emit_research_event(
-                "openalex.author_not_found", professor=identity.name,
+                "openalex.author_not_found",
+                professor=identity.name,
                 action="continue_research_preserve_existing_publications",
             )
             return []
@@ -107,7 +104,8 @@ class _PublicationLookup:
             # still propagates because asyncio.CancelledError is a BaseException.
             self.unavailable = True
             emit_research_event(
-                "openalex.publications_failed", professor=identity.name,
+                "openalex.publications_failed",
+                professor=identity.name,
                 error_type=type(error).__name__,
                 action="continue_research_preserve_existing_publications",
             )
@@ -148,66 +146,28 @@ class LangGraphCandidateResearcher:
             email=candidate.email,
             title=candidate.title,
             affiliation=candidate.affiliation,
-            official_profile_url=candidate.directory_profile_url,
+            official_profile_url=candidate.official_profile_url,
         )
-        personal_url = await HomepageGraph(
+        research = await UnifiedResearchGraph(
             identity=identity,
             chat_model=self.chat_model,
-            tools=create_homepage_tools(search=self.tavily, reader=self.homepage_reader),
-        ).ainvoke()
-        registry = CandidateSourceRegistry()
-        official_source = registry.register_hit(
-            SearchHit(
-                title=f"Official UIUC profile for {candidate.name}",
-                url=candidate.directory_profile_url,
-                snippet="Official UIUC ECE faculty profile.",
-            )
-        )
-        preloaded_sources = [official_source]
-        if personal_url:
-            personal_source = registry.register_hit(SearchHit(
-                title=f"Verified personal homepage for {candidate.name}",
-                url=personal_url,
-                snippet="Personal homepage verified during homepage discovery.",
-            ))
-            if personal_source.source_id != official_source.source_id:
-                preloaded_sources.append(personal_source)
-        page_extractor = PageExtractor(self.page_http, registry)
-        initial_pages = []
-        attempted_source_ids = []
-        for source in preloaded_sources:
-            attempted_source_ids.append(source.source_id)
-            try:
-                page = await page_extractor.extract(source.source_id, identity)
-            except httpx.HTTPError as error:
-                emit_research_event(
-                    "research_page.failed", professor=identity.name,
-                    source_id=source.source_id, error_type=type(error).__name__,
-                )
-                continue
-            initial_pages.append(page)
-        tools = create_research_tools(
-            identity=identity,
-            registry=registry,
-            tavily=self.tavily,
-            page_extractor=page_extractor,
-        )
-        research = await ProfessorResearchGraph(
-            identity=identity,
-            chat_model=self.chat_model,
-            tools=tools,
-            registry=registry,
-            initial_pages=initial_pages,
-            attempted_source_ids=attempted_source_ids,
-            preloaded_sources=preloaded_sources,
+            search=self.tavily,
+            reader=self.homepage_reader,
+            mapper=self.homepage_reader,
         ).ainvoke()
         publication_lookup = _PublicationLookup(self.openalex)
-        publications = await publication_lookup.get_recent_publications(identity)
-        return research.model_copy(update={
-            "lab_url": personal_url,
-            "publications": publications,
-            "publications_unavailable": publication_lookup.unavailable,
-        })
+        try:
+            async with asyncio.timeout(30):
+                publications = await publication_lookup.get_recent_publications(identity)
+        except TimeoutError:
+            publication_lookup.unavailable = True
+            publications = []
+        return research.model_copy(
+            update={
+                "publications": publications,
+                "publications_unavailable": publication_lookup.unavailable,
+            }
+        )
 
 
 class UpdateCheckService:
@@ -280,7 +240,7 @@ class UpdateCheckService:
                 professor_id=record.id,
                 name=record.name,
                 email=record.email,
-                directory_profile_url=record.directory_profile_url,
+                official_profile_url=record.official_profile_url,
             )
             for record in existing_records
         )
@@ -387,16 +347,13 @@ class UpdateCheckService:
         research: ValidatedProfessorResearch,
     ) -> None:
         now = datetime.now(UTC)
-        source_urls = list(
-            dict.fromkeys([candidate.directory_profile_url, *research.source_urls])
-        )
+        source_urls = list(dict.fromkeys([candidate.official_profile_url, *research.source_urls]))
         professor = ProfessorCreate(
             name=candidate.name,
             title=candidate.title,
             email=candidate.email,
-            directory_profile_url=candidate.directory_profile_url,
-            homepage_url=research.homepage_url,
-            lab_url=research.lab_url,
+            official_profile_url=candidate.official_profile_url,
+            personal_homepage_url=research.personal_homepage_url,
             research_summary=research.research_summary,
             prospective_students_quote=research.prospective_students_quote,
             prospective_students_source_url=research.prospective_students_source_url,
@@ -427,10 +384,9 @@ class UpdateCheckService:
     def _job_level_error_or_none(error: Exception) -> tuple[str, str] | None:
         if isinstance(error, JobLevelUpdateError):
             return error.code, error.message
-        is_provider_access_error = (
-            isinstance(error, httpx.HTTPStatusError)
-            and error.response.status_code in {401, 403, 429}
-        )
+        is_provider_access_error = isinstance(
+            error, httpx.HTTPStatusError
+        ) and error.response.status_code in {401, 403, 429}
         if is_provider_access_error:
             return "PROVIDER_ACCESS_FAILED", str(error)
         return None
@@ -458,10 +414,12 @@ def build_default_update_check_service(
     tavily = TavilyProvider(
         limiter=tavily_limiter,
         api_key=settings.tavily_api_key,
+        client=http_client,
     )
     openalex = OpenAlexProvider(openalex_http, api_key=settings.openalex_api_key)
     chat_kwargs: dict[str, object] = {
         "model": settings.llm_model,
+        "max_retries": 0,
         "api_key": settings.llm_api_key.get_secret_value(),
     }
     if settings.llm_base_url is not None:
@@ -473,7 +431,9 @@ def build_default_update_check_service(
         openalex=openalex,
         page_http=page_http,
         homepage_reader=TavilyExtractProvider(
-            http_client, api_key=settings.tavily_api_key, limiter=tavily_limiter,
+            http_client,
+            api_key=settings.tavily_api_key,
+            limiter=tavily_limiter,
         ),
     )
     professor_updates = ProfessorUpdateService(settings.database_path, researcher)

@@ -10,9 +10,9 @@ const PROFESSOR = {
   name: "Alice Systems",
   title: "Professor",
   email: "alice@illinois.edu",
-  directory_profile_url: "https://ece.illinois.edu/alice",
-  homepage_url: "https://alice.example.edu",
-  lab_url: "https://alice.example.edu/lab",
+  official_profile_url: "https://ece.illinois.edu/alice",
+
+  personal_homepage_url: "https://alice.example.edu/lab",
   research_summary: "Alice studies dependable computer systems.",
   tags: ["Architecture"],
   source_urls: ["https://ece.illinois.edu/alice"],
@@ -54,7 +54,7 @@ test("shows research, publications, and saves an application explicitly", async 
   expect(await screen.findByRole("heading", { name: "Alice Systems" })).toBeInTheDocument();
   expect(screen.getByText("Alice studies dependable computer systems.")).toBeInTheDocument();
   expect(screen.getByText("Reliable Accelerators")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /Personal website/ })).toHaveAttribute("href", PROFESSOR.lab_url);
+  expect(screen.getByRole("link", { name: /Personal website/ })).toHaveAttribute("href", PROFESSOR.personal_homepage_url);
   await user.selectOptions(screen.getByLabelText("Status"), "applied");
   await user.type(screen.getByLabelText("Application date"), "2026-08-16");
   await user.type(screen.getByLabelText("Notes"), "Submitted");

@@ -15,7 +15,7 @@ TRACKING_QUERY_KEYS = frozenset({"fbclid", "gclid", "mc_cid", "mc_eid"})
 class CandidateIdentity(Protocol):
     name: str
     email: str | None
-    directory_profile_url: str
+    official_profile_url: str
     affiliation: str
 
 
@@ -24,7 +24,7 @@ class ExistingProfessorIdentity:
     professor_id: int
     name: str
     email: str | None
-    directory_profile_url: str
+    official_profile_url: str
     affiliation: str = UIUC_ECE_AFFILIATION
 
 
@@ -85,7 +85,7 @@ class IdentityIndex:
         self._by_name_and_affiliation: dict[tuple[str, str], list[int]] = defaultdict(list)
 
         for identity in identities:
-            self._by_url[normalize_url(identity.directory_profile_url)].append(identity.professor_id)
+            self._by_url[normalize_url(identity.official_profile_url)].append(identity.professor_id)
             email = normalize_email(identity.email)
             if email:
                 self._by_email[email].append(identity.professor_id)
@@ -93,9 +93,9 @@ class IdentityIndex:
             self._by_name_and_affiliation[name_key].append(identity.professor_id)
 
     def match(self, candidate: CandidateIdentity) -> int | None:
-        url_matches = self._by_url.get(normalize_url(candidate.directory_profile_url), [])
+        url_matches = self._by_url.get(normalize_url(candidate.official_profile_url), [])
         if url_matches:
-            return self._single_match("directory_profile_url", url_matches)
+            return self._single_match("official_profile_url", url_matches)
 
         email = normalize_email(candidate.email)
         if email:

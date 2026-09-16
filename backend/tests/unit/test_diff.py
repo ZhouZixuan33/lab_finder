@@ -14,9 +14,8 @@ def current_professor() -> ProfessorRecord:
         name="Alice Systems",
         title="Professor",
         email="alice@illinois.edu",
-        directory_profile_url="https://ece.illinois.edu/alice",
-        homepage_url="https://alice.example.edu",
-        lab_url="https://alice.example.edu/lab",
+        official_profile_url="https://ece.illinois.edu/alice",
+        personal_homepage_url="https://alice.example.edu/lab",
         research_summary="Alice studies reliable computer architecture and secure accelerators.",
         tags=["Architecture", "Reliable AI"],
         source_urls=["https://ece.illinois.edu/alice", "https://alice.example.edu"],
@@ -45,8 +44,7 @@ def same_research() -> ValidatedProfessorResearch:
     return ValidatedProfessorResearch(
         research_summary="Alice studies reliable computer architecture and secure accelerators.",
         tags=["Reliable AI", "Architecture"],
-        homepage_url="https://alice.example.edu",
-        lab_url="https://alice.example.edu/lab",
+        personal_homepage_url="https://alice.example.edu/lab",
         publications=[
             OpenAlexPublication(
                 source_id="openalex:W1",

@@ -22,16 +22,16 @@ def test_initial_migration_builds_the_complete_schema(tmp_path: Path) -> None:
         ).fetchall()
         user_version = connection.execute("PRAGMA user_version").fetchone()[0]
 
-    assert applied_versions == [1, 2]
+    assert applied_versions == [1, 2, 3]
     assert {row["name"] for row in table_rows} == EXPECTED_TABLES
-    assert user_version == 2
+    assert user_version == 3
 
 
 def test_running_migrations_twice_is_idempotent(tmp_path: Path) -> None:
     database_path = tmp_path / "lab_tracker.db"
 
     with connect_database(database_path) as connection:
-        assert run_migrations(connection) == [1, 2]
+        assert run_migrations(connection) == [1, 2, 3]
         schema_before = connection.execute(
             "SELECT type, name, sql FROM sqlite_master "
             "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"

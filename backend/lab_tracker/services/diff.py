@@ -18,9 +18,8 @@ class ProfessorUpdateSnapshot(DomainModel):
     name: str
     title: str
     email: str | None = None
-    directory_profile_url: str
-    homepage_url: str | None = None
-    lab_url: str | None = None
+    official_profile_url: str
+    personal_homepage_url: str | None = None
     prospective_students_quote: str | None = None
     prospective_students_source_url: str | None = None
     research_summary: str
@@ -80,9 +79,7 @@ def _semantic_hash(
 ) -> str:
     payload = snapshot.model_dump(mode="json", exclude={"source_hash"})
     payload["tags"] = sorted({tag.casefold() for tag in snapshot.tags})
-    payload["source_urls"] = sorted(
-        {normalize_url(url) for url in snapshot.source_urls}
-    )
+    payload["source_urls"] = sorted({normalize_url(url) for url in snapshot.source_urls})
     payload["publications"] = sorted(_publication_key(item) for item in publications)
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -91,7 +88,7 @@ def _semantic_hash(
 def _comparison_value(field: str, value: Any) -> Any:
     if field == "email":
         return normalize_email(value)
-    if field in {"directory_profile_url", "homepage_url", "lab_url"}:
+    if field in {"official_profile_url", "personal_homepage_url"}:
         return normalize_url(value) if value else None
     if field == "tags":
         return sorted({" ".join(tag.split()).casefold() for tag in value})
@@ -111,9 +108,8 @@ def compare_professor_update(
         name=current.name,
         title=current.title,
         email=current.email,
-        directory_profile_url=current.directory_profile_url,
-        homepage_url=current.homepage_url,
-        lab_url=current.lab_url,
+        official_profile_url=current.official_profile_url,
+        personal_homepage_url=current.personal_homepage_url,
         prospective_students_quote=current.prospective_students_quote,
         prospective_students_source_url=current.prospective_students_source_url,
         research_summary=current.research_summary,
@@ -134,16 +130,13 @@ def compare_professor_update(
     ]
     if research.publications_unavailable:
         proposed_publications = [_publication_from_record(item) for item in current_publications]
-    proposed_sources = list(
-        dict.fromkeys([current.directory_profile_url, *research.source_urls])
-    )
+    proposed_sources = list(dict.fromkeys([current.official_profile_url, *research.source_urls]))
     new_values_without_hash = ProfessorUpdateSnapshot(
         name=current.name,
         title=current.title,
         email=current.email,
-        directory_profile_url=current.directory_profile_url,
-        homepage_url=research.homepage_url,
-        lab_url=research.lab_url,
+        official_profile_url=current.official_profile_url,
+        personal_homepage_url=research.personal_homepage_url,
         prospective_students_quote=research.prospective_students_quote,
         prospective_students_source_url=research.prospective_students_source_url,
         research_summary=research.research_summary,
@@ -165,9 +158,8 @@ def compare_professor_update(
         "name",
         "title",
         "email",
-        "directory_profile_url",
-        "homepage_url",
-        "lab_url",
+        "official_profile_url",
+        "personal_homepage_url",
         "prospective_students_quote",
         "prospective_students_source_url",
         "research_summary",

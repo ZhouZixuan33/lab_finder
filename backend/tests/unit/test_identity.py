@@ -21,7 +21,7 @@ def candidate(
         name=name,
         title="Assistant Professor",
         email=email,
-        directory_profile_url=profile_url,
+        official_profile_url=profile_url,
     )
 
 
@@ -39,13 +39,13 @@ def test_identity_matching_uses_profile_then_email_then_name() -> None:
             professor_id=1,
             name="Different Person",
             email="different@illinois.edu",
-            directory_profile_url="https://ece.illinois.edu/about/directory/faculty/jose",
+            official_profile_url="https://ece.illinois.edu/about/directory/faculty/jose",
         ),
         ExistingProfessorIdentity(
             professor_id=2,
             name="José A. Example",
             email="jose@illinois.edu",
-            directory_profile_url="https://ece.illinois.edu/about/directory/faculty/other",
+            official_profile_url="https://ece.illinois.edu/about/directory/faculty/other",
         ),
     ]
     index = IdentityIndex(identities)
@@ -69,13 +69,13 @@ def test_ambiguous_email_or_name_fails_only_that_candidate() -> None:
                 professor_id=1,
                 name="Same Person",
                 email="shared@illinois.edu",
-                directory_profile_url="https://ece.illinois.edu/one",
+                official_profile_url="https://ece.illinois.edu/one",
             ),
             ExistingProfessorIdentity(
                 professor_id=2,
                 name="Same Person",
                 email="shared@illinois.edu",
-                directory_profile_url="https://ece.illinois.edu/two",
+                official_profile_url="https://ece.illinois.edu/two",
             ),
         ]
     )

@@ -97,7 +97,7 @@ def validate_research_result(
         prospective_students_source_url=prospective_url,
         research_summary=" ".join(result.research_summary.split()),
         tags=tags,
-        homepage_url=resolve_link(result.homepage_source_id, "homepage"),
+        personal_homepage_url=resolve_link(result.homepage_source_id, "homepage"),
         source_urls=[registry.get(source_id).url for source_id in evidence_ids],
         confidence=result.confidence,
     )

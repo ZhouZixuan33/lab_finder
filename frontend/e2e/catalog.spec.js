@@ -5,9 +5,9 @@ const professor = {
   name: "Alice Systems",
   title: "Professor",
   email: "alice@illinois.edu",
-  directory_profile_url: "https://ece.illinois.edu/alice",
-  homepage_url: "https://alice.example.edu",
-  lab_url: "https://alice.example.edu/lab",
+  official_profile_url: "https://ece.illinois.edu/alice",
+
+  personal_homepage_url: "https://alice.example.edu/lab",
   research_summary: "Alice studies dependable computer systems and AI accelerators.",
   tags: ["Architecture", "Reliable AI"],
   source_urls: ["https://ece.illinois.edu/alice"],

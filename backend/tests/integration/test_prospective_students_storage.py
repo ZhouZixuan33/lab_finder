@@ -25,7 +25,7 @@ def test_legacy_migration_and_recruitment_proposal_round_trip(tmp_path: Path):
             "'hash', '2026-09-14', '2026-09-14', '2026-09-14')"
         )
         connection.commit()
-        assert run_migrations(connection) == [2]
+        assert run_migrations(connection) == [2, 3]
         repository = ProfessorsRepository(connection)
         current = repository.list_all()[0]
         assert current.prospective_students_quote is None
@@ -33,7 +33,7 @@ def test_legacy_migration_and_recruitment_proposal_round_trip(tmp_path: Path):
             research_summary=current.research_summary,
             tags=[],
             prospective_students_quote="Prospective students are welcome to apply.",
-            prospective_students_source_url=current.directory_profile_url,
+            prospective_students_source_url=current.official_profile_url,
         )
         difference = compare_professor_update(current, [], research)
         assert "prospective_students_quote" in difference.field_changes
@@ -49,8 +49,8 @@ def test_legacy_migration_and_recruitment_proposal_round_trip(tmp_path: Path):
         detail = repository.get_detail(current.id)
         items, _ = repository.list()
         assert items[0].prospective_students_quote == research.prospective_students_quote
-        assert detail.prospective_students_source_url == current.directory_profile_url
+        assert detail.prospective_students_source_url == current.official_profile_url
         copy_values = difference.new_values.model_dump()
-        copy_values["directory_profile_url"] = "https://example.edu/another-professor"
+        copy_values["official_profile_url"] = "https://example.edu/another-professor"
         copied = repository.create(ProfessorCreate(**copy_values))
         assert copied.prospective_students_quote == research.prospective_students_quote

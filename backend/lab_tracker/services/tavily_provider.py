@@ -2,6 +2,7 @@
 
 from typing import Any, Protocol
 
+import httpx
 from langchain_tavily import TavilySearch
 from pydantic import SecretStr
 
@@ -20,8 +21,10 @@ class TavilyProvider:
         *,
         limiter: SerialRateLimiter | None = None,
         api_key: SecretStr | None = None,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
-        if backend is None:
+        self._client = client
+        if backend is None and client is None:
             if api_key is None:
                 raise ValueError("A Tavily API key is required")
             backend = TavilySearch(
@@ -49,7 +52,26 @@ class TavilyProvider:
             raise ValueError("Tavily query must contain between 1 and 500 characters")
 
         async with self._limiter.slot():
-            payload = await self._backend.ainvoke({"query": normalized_query})
+            if self._client is not None:
+                if self._api_key is None:
+                    raise ValueError("A Tavily API key is required")
+                response = await self._client.post(
+                    "https://api.tavily.com/search",
+                    headers={"Authorization": f"Bearer {self._api_key.get_secret_value()}"},
+                    json={
+                        "query": normalized_query,
+                        "search_depth": "basic",
+                        "max_results": 5,
+                        "include_answer": False,
+                        "include_raw_content": False,
+                    },
+                    timeout=20,
+                    follow_redirects=False,
+                )
+                response.raise_for_status()
+                payload = response.json()
+            else:
+                payload = await self._backend.ainvoke({"query": normalized_query})
         if not isinstance(payload, dict):
             raise ValueError("Tavily returned an invalid response")
 

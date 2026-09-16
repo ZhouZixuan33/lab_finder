@@ -21,7 +21,7 @@ def build_test_app(database_path: Path) -> tuple[TestClient, int]:
                 name="Alice Systems",
                 title="Professor",
                 email="alice@illinois.edu",
-                directory_profile_url="https://ece.illinois.edu/alice",
+                official_profile_url="https://ece.illinois.edu/alice",
                 research_summary="Original research summary.",
                 tags=["Architecture"],
                 source_hash="alice-hash",

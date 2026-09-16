@@ -11,7 +11,7 @@ const CATALOG = {
     name: "Alice Systems",
     title: "Professor",
     email: "alice@illinois.edu",
-    lab_url: "https://alice.example.edu/lab",
+    personal_homepage_url: "https://alice.example.edu/lab",
     tags: ["Architecture", "Reliable AI"],
     application_state: null,
   }],

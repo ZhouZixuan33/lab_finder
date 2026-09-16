@@ -71,8 +71,8 @@ class ProfessorResearchResult(DomainModel):
 class ValidatedProfessorResearch(DomainModel):
     research_summary: str
     tags: list[str]
-    homepage_url: str | None = None
-    lab_url: str | None = None
+    official_profile_url: str | None = None
+    personal_homepage_url: str | None = None
     prospective_students_quote: str | None = None
     prospective_students_source_url: str | None = None
     publications: list[OpenAlexPublication] = Field(default_factory=list)

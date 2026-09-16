@@ -43,7 +43,7 @@ export default function ProfessorTable({ professors }) {
               <td data-label="Name"><Link className="professor-name" to={`/professors/${professor.id}`}>{professor.name}</Link></td>
               <td data-label="Title">{professor.title}</td>
               <td data-label="Email">{professor.email ? <a href={`mailto:${professor.email}`}>{professor.email}</a> : <span className="muted">—</span>}</td>
-              <td data-label="Personal website"><ExternalLink href={professor.lab_url}>Personal website</ExternalLink></td>
+              <td data-label="Personal website"><ExternalLink href={professor.personal_homepage_url}>Personal website</ExternalLink></td>
               <td data-label="Tags">
                 <div className="tag-list">
                   {professor.tags.length > 0 ? professor.tags.map((tag) => <span className="tag" key={tag}>{tag}</span>) : <span className="muted">—</span>}

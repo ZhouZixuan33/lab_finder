@@ -19,7 +19,7 @@ def candidates(count: int = 10) -> list[FacultyCandidate]:
             name=f"Professor {index}",
             title="Assistant Professor",
             email=f"professor-{index}@illinois.edu",
-            directory_profile_url=f"https://ece.illinois.edu/about/directory/faculty/{index}",
+            official_profile_url=f"https://ece.illinois.edu/about/directory/faculty/{index}",
         )
         for index in range(1, count + 1)
     ]
@@ -31,8 +31,7 @@ def research_result(index: int) -> ValidatedProfessorResearch:
             f"Professor {index} studies reliable computing systems and secure hardware design."
         ),
         tags=["Reliable Systems"],
-        homepage_url=f"https://professor-{index}.example.edu",
-        lab_url=f"https://professor-{index}.example.edu/lab",
+        personal_homepage_url=f"https://professor-{index}.example.edu/lab",
         publications=[
             OpenAlexPublication(
                 source_id=f"openalex:W{index}",
@@ -208,7 +207,7 @@ async def test_new_job_logs_validated_professor_before_persistence(
     payload = json.loads(message.split(" ", 1)[1])
     assert job.status is JobStatus.COMPLETED
     assert payload["name"] == "Professor 1"
-    assert payload["lab_url"] == "https://professor-1.example.edu/lab"
+    assert payload["personal_homepage_url"] == "https://professor-1.example.edu/lab"
     assert payload["publications"][0]["title"] == "Research Paper 1"
     assert await professor_count(database_path) == 1
 

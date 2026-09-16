@@ -17,7 +17,7 @@ def candidate() -> FacultyCandidate:
         name="Alice Systems",
         title="Professor",
         email="alice@illinois.edu",
-        directory_profile_url="https://ece.illinois.edu/alice",
+        official_profile_url="https://ece.illinois.edu/alice",
     )
 
 
@@ -25,8 +25,7 @@ def research() -> ValidatedProfessorResearch:
     return ValidatedProfessorResearch(
         research_summary="Alice studies dependable computer systems and reliable accelerators.",
         tags=["Architecture", "Reliable AI"],
-        homepage_url="https://alice.example.edu",
-        lab_url="https://alice.example.edu/lab",
+        personal_homepage_url="https://alice.example.edu/lab",
         publications=[
             OpenAlexPublication(
                 source_id="openalex:W1",
@@ -76,8 +75,7 @@ def test_extracted_professor_is_allowlisted_structured_json(caplog) -> None:
     assert payload == {
         "confidence": 0.92,
         "email": "alice@illinois.edu",
-        "homepage_url": "https://alice.example.edu",
-        "lab_url": "https://alice.example.edu/lab",
+        "personal_homepage_url": "https://alice.example.edu/lab",
         "name": "Alice Systems",
         "publications": [
             {

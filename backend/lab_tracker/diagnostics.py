@@ -77,8 +77,7 @@ def emit_professor_extracted(
         name=candidate.name,
         title=candidate.title,
         email=candidate.email,
-        homepage_url=research.homepage_url,
-        lab_url=research.lab_url,
+        personal_homepage_url=research.personal_homepage_url,
         research_summary=research.research_summary,
         tags=research.tags,
         publications=[

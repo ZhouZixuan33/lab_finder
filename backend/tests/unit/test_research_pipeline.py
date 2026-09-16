@@ -7,7 +7,8 @@ import httpx
 import pytest
 from langchain_core.messages import AIMessage
 
-from lab_tracker.models.research import OpenAlexPublication, ProfessorResearchResult
+from lab_tracker.models.homepage import ReadWebpageResult
+from lab_tracker.models.research import OpenAlexPublication
 from lab_tracker.services import update_checks
 from lab_tracker.services.discovery import FacultyCandidate
 from lab_tracker.services.openalex_provider import AmbiguousOpenAlexAuthorError
@@ -40,62 +41,71 @@ def pipeline(
         for i in range(1, 4)
     ]
 
-    class Homepage:
-        def __init__(self, **kwargs):
-            pass
-
-        async def ainvoke(self):
-            events.append("homepage")
-            return personal
-
-    class Http:
-        async def get(self, url):
+    class Reader:
+        async def extract(self, url):
             events.append(url)
             if url in failed_urls:
-                raise httpx.ConnectError("unavailable", request=httpx.Request("GET", url))
+                raise httpx.ConnectError("unavailable")
             text = (
                 SUMMARY if match_identity else "Other Person researches entirely different topics."
             )
-            return httpx.Response(
-                200, request=httpx.Request("GET", url), text=f"<main>{text}</main>"
-            )
+            return ReadWebpageResult(requested_url=url, url=url, content=text)
+
+        async def map(self, url, instructions):
+            raise AssertionError("No Map expected")
 
     class Search:
         async def search(self, query):
-            raise AssertionError("Sufficient homepage evidence should not require search")
+            raise AssertionError("No Search expected")
 
     class Agent:
+        def __init__(self, stage):
+            self.stage = stage
+            self.turn = 0
+
         async def ainvoke(self, messages):
-            events.append("research_agent")
-            return AIMessage(content="Website evidence is sufficient; finalize.")
+            urls = [OFFICIAL, PERSONAL] if personal else [OFFICIAL]
+            self.turn += 1
+            if self.stage == "research":
+                events.append("research_agent")
+            if self.turn <= len(urls):
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "read_webpage",
+                            "args": {"url": urls[self.turn - 1]},
+                            "id": f"{self.stage}-{self.turn}",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            if self.stage == "homepage":
+                events.append("homepage")
+                return AIMessage(content=json.dumps({"personal_homepage_url": personal}))
+            return AIMessage(content="Done")
 
     class Finalizer:
         async def ainvoke(self, messages):
             events.append("summary")
-            # Retry prompts append errors after the JSON; this model intentionally
-            # returns invalid IDs on every attempt for the failure test.
-            payload, _ = json.JSONDecoder().raw_decode(str(messages[1].content))
+            payload = json.loads(messages[1].content)
             captured.append(payload)
-            ids = [p["source_id"] for p in payload["verified_pages"]]
-            if invalid_summary or not ids:
-                ids = ["source_999"]
+            if not match_identity:
+                return {"status": "insufficient_evidence", "reason": "Wrong person"}
             return {
+                "status": "success",
                 "research_summary": SUMMARY,
-                "tags": TAGS,
-                "evidence_source_ids": ids,
-                "homepage_source_id": ids[0],
+                "tags": ["invalid"] if invalid_summary else TAGS,
+                "evidence_urls": [page["url"] for page in payload["pages"]],
             }
 
     class Model:
         def bind_tools(self, tools, **kwargs):
-            assert {tool.name for tool in tools} == {
-                "search_professor_web",
-                "extract_candidate_page",
-            }
-            return Agent()
+            names = {tool.name for tool in tools}
+            assert names in ({"search_web", "read_webpage"}, {"read_webpage", "map_website"})
+            return Agent("homepage" if "search_web" in names else "research")
 
-        def with_structured_output(self, schema):
-            assert schema is ProfessorResearchResult
+        def with_structured_output(self, schema, **kwargs):
             return Finalizer()
 
     class Publications:
@@ -107,16 +117,15 @@ def pipeline(
                 raise publication_error
             return papers
 
-    monkeypatch.setattr(update_checks, "HomepageGraph", Homepage)
     researcher = update_checks.LangGraphCandidateResearcher(
         chat_model=Model(),
         tavily=Search(),
         openalex=Publications(),
-        page_http=Http(),
-        homepage_reader=None,
+        page_http=None,
+        homepage_reader=Reader(),
     )
     candidate = FacultyCandidate(
-        name="Alice Systems", title="Professor", email=None, directory_profile_url=OFFICIAL
+        name="Alice Systems", title="Professor", email=None, official_profile_url=OFFICIAL
     )
     return researcher, candidate, events, captured, papers
 
@@ -146,15 +155,16 @@ async def test_webpage_summary_precedes_all_publications(
     )
     run = researcher.research_with_refresh if refresh else researcher.research
     result = await run(candidate)
-    attempted_urls = [OFFICIAL, PERSONAL] if personal else [OFFICIAL]
-    assert events == ["homepage", *attempted_urls, "research_agent", "summary", "publications"]
-    assert [p["url"] for p in captured[0]["verified_pages"]] == expected_urls
+    assert events.index("homepage") < events.index("research_agent") < events.index("summary")
+    assert events[-2:] == ["summary", "publications"]
+    assert events.count(OFFICIAL) == 2
+    assert [p["url"] for p in captured[0]["pages"]] == expected_urls
     assert "openalex_publications" not in captured[0]
     assert result.source_urls == expected_urls
     assert result.research_summary == SUMMARY
     assert result.tags == TAGS
     assert result.publications == papers  # Attach every result, without LLM selection.
-    assert result.lab_url == personal
+    assert result.personal_homepage_url == (None if personal in failed_urls else personal)
 
 
 @pytest.mark.asyncio
@@ -170,7 +180,10 @@ async def test_invalid_webpage_evidence_never_starts_publication_lookup(monkeypa
     researcher, candidate, events, _, _ = pipeline(monkeypatch, **kwargs)
     with pytest.raises(ResearchGraphError):
         await researcher.research(candidate)
-    assert events.count("summary") == 3
+    expected = (
+        2 if kwargs.get("invalid_summary") else 1 if kwargs.get("match_identity") is False else 0
+    )
+    assert events.count("summary") == expected
     assert "publications" not in events
 
 
@@ -192,7 +205,7 @@ async def test_publication_error_preserves_validated_research(monkeypatch, error
     result = await run(candidate)
     assert result.research_summary == SUMMARY
     assert result.tags == TAGS
-    assert result.lab_url == PERSONAL
+    assert result.personal_homepage_url == PERSONAL
     assert result.publications == []
     assert result.publications_unavailable is True
     assert events[-2:] == ["summary", "publications"]

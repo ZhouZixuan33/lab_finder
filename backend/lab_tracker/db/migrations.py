@@ -65,6 +65,14 @@ def run_migrations(
         if migration.version <= current_version:
             continue
 
+        if migration.path.name == "003_profile_urls.sql":
+            from lab_tracker.db.profile_urls import prepare_profile_url_migration
+
+            try:
+                prepare_profile_url_migration(connection)
+            except ValueError as error:
+                raise MigrationError(str(error)) from error
+
         sql = migration.path.read_text(encoding="utf-8")
         script = (
             "BEGIN IMMEDIATE;\n"

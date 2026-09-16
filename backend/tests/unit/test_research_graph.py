@@ -171,7 +171,7 @@ async def test_graph_runs_explicit_tool_sequence_and_structured_finalizer() -> N
 
     assert search.queries == ["Alice Systems UIUC lab"]
     assert pages.source_ids == ["source_002"]
-    assert result.homepage_url == "https://alice.example.edu/lab-1"
+    assert result.personal_homepage_url == "https://alice.example.edu/lab-1"
     assert result.publications == []
     assert any("UNKNOWN_TOOL" in str(m.content) for ms in model.agent_inputs for m in ms)
     assert model.parallel_tool_calls is False
@@ -264,7 +264,7 @@ async def test_graph_rejects_arbitrary_url_and_parallel_tool_calls_before_toolno
 
     assert search.queries == []
     assert pages.source_ids == ["source_001"]
-    assert result.homepage_url == identity().official_profile_url
+    assert result.personal_homepage_url == identity().official_profile_url
 
 
 @pytest.mark.asyncio

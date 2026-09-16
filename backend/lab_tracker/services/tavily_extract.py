@@ -29,7 +29,7 @@ class TavilyExtractProvider:
                 headers={"Authorization": f"Bearer {self._api_key.get_secret_value()}"},
                 json={
                     "urls": [url],
-                    "extract_depth": "basic",
+                    "extract_depth": "advanced",
                     "format": "markdown",
                     "include_images": False,
                     "include_favicon": False,
@@ -52,5 +52,30 @@ class TavilyExtractProvider:
             requested_url=url,
             url=result["url"],
             content=content[:MAX_CONTENT_CHARACTERS],
-            truncated=len(content) > MAX_CONTENT_CHARACTERS,
+            content_truncated=len(content) > MAX_CONTENT_CHARACTERS,
+            original_content_chars=len(content),
         )
+
+    async def map(self, url: str, instructions: str) -> list[str]:
+        url = validate_public_url(url)
+        async with self.limiter.slot():
+            response = await self.client.post(
+                "https://api.tavily.com/map",
+                headers={"Authorization": f"Bearer {self._api_key.get_secret_value()}"},
+                json={
+                    "url": url,
+                    "instructions": instructions,
+                    "limit": 20,
+                    "max_depth": 2,
+                    "allow_external": False,
+                    "timeout": 15,
+                },
+                timeout=20,
+                follow_redirects=False,
+            )
+        response.raise_for_status()
+        payload = response.json()
+        urls = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(urls, list):
+            raise ValueError("Invalid Map response")
+        return [validate_public_url(item) for item in urls[:20] if isinstance(item, str)]

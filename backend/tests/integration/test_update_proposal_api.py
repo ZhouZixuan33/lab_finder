@@ -77,9 +77,8 @@ def seed_professor(database_path: Path) -> int:
                 name="Alice Systems",
                 title="Professor",
                 email="alice@illinois.edu",
-                directory_profile_url="https://ece.illinois.edu/alice",
-                homepage_url="https://alice.example.edu",
-                lab_url="https://alice.example.edu/lab",
+                official_profile_url="https://ece.illinois.edu/alice",
+                personal_homepage_url="https://alice.example.edu/lab",
                 research_summary=(
                     "Alice studies reliable computer architecture and secure accelerators."
                 ),
@@ -118,8 +117,7 @@ def changed_research() -> ValidatedProfessorResearch:
             "Alice studies dependable AI accelerators and fault-tolerant computer systems."
         ),
         tags=["Reliable AI", "Computer Architecture"],
-        homepage_url="https://alice.example.edu",
-        lab_url="https://alice.example.edu/new-lab",
+        personal_homepage_url="https://alice.example.edu/new-lab",
         publications=[
             OpenAlexPublication(
                 source_id="openalex:W2",
@@ -179,7 +177,7 @@ def test_publication_failure_still_returns_reviewable_and_applicable_update(tmp_
         lookup = _PublicationLookup(FailingOpenAlex())
         papers = await lookup.get_recent_publications(ResearchIdentity(
             name=candidate.name, title=candidate.title, affiliation=candidate.affiliation,
-            official_profile_url=candidate.directory_profile_url,
+            official_profile_url=candidate.official_profile_url,
         ))
         return research.model_copy(update={
             "publications": papers, "publications_unavailable": lookup.unavailable,
@@ -250,7 +248,7 @@ def test_single_check_creates_pending_without_writes_then_apply_is_atomic(
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "PENDING_UPDATE_EXISTS"
     assert conflict.json()["error"]["details"]["proposal_id"] == proposal_id
-    assert proposal.json()["new_values"]["lab_url"].endswith("/new-lab")
+    assert proposal.json()["new_values"]["personal_homepage_url"].endswith("/new-lab")
     assert applied.status_code == 200
     assert applied.json()["status"] == "applied"
     assert repeated.status_code == 409
@@ -270,7 +268,7 @@ def test_single_check_creates_pending_without_writes_then_apply_is_atomic(
 def test_missing_author_preserves_publications_when_homepage_proposal_is_applied(tmp_path: Path):
     research = changed_research().model_copy(update={
         "publications": [], "publications_unavailable": True,
-        "lab_url": "https://alice.github.io/",
+        "personal_homepage_url": "https://alice.github.io/",
     })
     client, _, professor_id = build_client(tmp_path / "missing-author.db", research)
     with client:
@@ -287,7 +285,7 @@ def test_missing_author_preserves_publications_when_homepage_proposal_is_applied
         assert proposal["publication_diff"]["proposed"][0]["title"] == "Old Paper"
         assert client.post(f"/api/update-proposals/{proposal_id}/apply").status_code == 200
         after = client.get(f"/api/professors/{professor_id}").json()
-    assert after["lab_url"] == "https://alice.github.io/"
+    assert after["personal_homepage_url"] == "https://alice.github.io/"
     assert [p["title"] for p in after["publications"]] == [
         p["title"] for p in before["publications"]
     ]
@@ -342,8 +340,7 @@ def test_no_difference_returns_changed_false_and_reject_is_one_way(tmp_path: Pat
     unchanged = ValidatedProfessorResearch(
         research_summary="Alice studies reliable computer architecture and secure accelerators.",
         tags=["Architecture"],
-        homepage_url="https://alice.example.edu",
-        lab_url="https://alice.example.edu/lab",
+        personal_homepage_url="https://alice.example.edu/lab",
         publications=[
             OpenAlexPublication(
                 source_id="openalex:W1",
@@ -403,7 +400,7 @@ def test_apply_constraint_failure_rolls_back_and_keeps_proposal_pending(tmp_path
             ProfessorCreate(
                 name="Bob Circuits",
                 title="Professor",
-                directory_profile_url="https://ece.illinois.edu/bob",
+                official_profile_url="https://ece.illinois.edu/bob",
                 research_summary="Bob studies integrated circuits and electronic systems.",
                 source_hash="bob-hash",
             ),
@@ -415,9 +412,8 @@ def test_apply_constraint_failure_rolls_back_and_keeps_proposal_pending(tmp_path
             name=current.name,
             title=current.title,
             email=current.email,
-            directory_profile_url=current.directory_profile_url,
-            homepage_url=current.homepage_url,
-            lab_url=current.lab_url,
+            official_profile_url=current.official_profile_url,
+            personal_homepage_url=current.personal_homepage_url,
             research_summary=current.research_summary,
             tags=current.tags,
             source_urls=current.source_urls,
@@ -425,7 +421,7 @@ def test_apply_constraint_failure_rolls_back_and_keeps_proposal_pending(tmp_path
         )
         new_values = old_values.model_copy(
             update={
-                "directory_profile_url": second.directory_profile_url,
+                "official_profile_url": second.official_profile_url,
                 "research_summary": "This write must roll back because the URL is duplicated.",
                 "source_hash": "conflicting-hash",
             }
@@ -455,7 +451,7 @@ def test_apply_constraint_failure_rolls_back_and_keeps_proposal_pending(tmp_path
         publications_after = PublicationsRepository(connection).list_for_professor(professor_id)
         application_after = ApplicationsRepository(connection).get(professor_id)
     assert current_after is not None
-    assert current_after.directory_profile_url == "https://ece.illinois.edu/alice"
+    assert current_after.official_profile_url == "https://ece.illinois.edu/alice"
     assert current_after.research_summary.startswith("Alice studies reliable")
     assert pending_after is not None and pending_after.status is ProposalStatus.PENDING
     assert [item.title for item in publications_after] == ["Old Paper"]

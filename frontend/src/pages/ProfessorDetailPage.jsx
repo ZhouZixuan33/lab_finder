@@ -101,9 +101,8 @@ export default function ProfessorDetailPage() {
                 {updateJob.running && <span className="spinner spinner--button" aria-hidden="true" />}
                 {updateJob.running ? "Checking…" : "Check this professor"}
               </button>}
-          <ExternalProfileLink href={professor.directory_profile_url}>UIUC profile</ExternalProfileLink>
-          <ExternalProfileLink href={professor.homepage_url}>Homepage</ExternalProfileLink>
-          <ExternalProfileLink href={professor.lab_url}>Personal website</ExternalProfileLink>
+          <ExternalProfileLink href={professor.official_profile_url}>UIUC profile</ExternalProfileLink>
+          <ExternalProfileLink href={professor.personal_homepage_url}>Personal website</ExternalProfileLink>
         </div>
       </section>
 

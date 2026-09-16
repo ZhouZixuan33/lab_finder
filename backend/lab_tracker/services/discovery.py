@@ -35,7 +35,7 @@ class FacultyCandidate:
     name: str
     title: str
     email: str | None
-    directory_profile_url: str
+    official_profile_url: str
     affiliation: str = UIUC_ECE_AFFILIATION
     has_research_evidence: bool = False
 
@@ -133,7 +133,7 @@ def parse_faculty_directory(
                 name=name,
                 title=title,
                 email=_email_from_document(card),
-                directory_profile_url=profile_url,
+                official_profile_url=profile_url,
             )
         )
         seen_urls.add(profile_url)
@@ -167,7 +167,7 @@ class FacultyDiscoveryClient:
                 continue
             enriched = candidate
             if candidate.email is None or title_status is None:
-                profile_html = await self.http_client.get_text(candidate.directory_profile_url)
+                profile_html = await self.http_client.get_text(candidate.official_profile_url)
                 enriched = enrich_candidate_from_profile(candidate, profile_html)
             if title_status is True or enriched.has_research_evidence:
                 accepted.append(enriched)

@@ -14,8 +14,8 @@ const PROPOSAL = {
     name: "Alice Systems",
     title: "Professor",
     email: "alice@illinois.edu",
-    homepage_url: "https://alice.example.edu",
-    lab_url: "https://alice.example.edu/old-lab",
+
+    personal_homepage_url: "https://alice.example.edu/old-lab",
     research_summary: "Old research summary.",
     tags: ["Architecture"],
     source_urls: ["https://ece.illinois.edu/alice"],
@@ -24,8 +24,8 @@ const PROPOSAL = {
     name: "Alice Systems",
     title: "Professor",
     email: "alice@illinois.edu",
-    homepage_url: "https://alice.example.edu",
-    lab_url: "https://alice.example.edu/new-lab",
+
+    personal_homepage_url: "https://alice.example.edu/new-lab",
     research_summary: "New research summary.",
     tags: ["Reliable AI"],
     source_urls: ["https://ece.illinois.edu/alice", "https://alice.example.edu/new-lab"],

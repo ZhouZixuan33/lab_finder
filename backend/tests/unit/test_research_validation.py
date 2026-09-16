@@ -74,8 +74,7 @@ def test_validation_resolves_only_verified_webpage_ids() -> None:
         registry=registry,
     )
 
-    assert validated.homepage_url == "https://alice.example.edu/lab"
-    assert validated.lab_url is None  # The orchestrator attaches the discovered homepage.
+    assert validated.personal_homepage_url == "https://alice.example.edu/lab"
     assert validated.tags == ["Security & Privacy", "Computer Architecture & Hardware"]
     assert validated.publications == []
     assert validated.source_urls == ["https://alice.example.edu/lab"]
